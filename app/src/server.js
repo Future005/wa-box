@@ -36,7 +36,7 @@ app.use(helmet({
       'default-src': ["'self'"],
       'script-src': ["'self'"],
       'style-src': ["'self'"],
-      'img-src': ["'self'", 'data:', 'blob:'],
+      'img-src': ["'self'", 'data:', 'blob:', 'https:'],
       'connect-src': ["'self'"],
       'frame-ancestors': ["'none'"],
       'form-action': ["'self'"],
@@ -176,12 +176,41 @@ function serializeJob(j) {
   const sends = db.prepare('SELECT group_id,group_name,status,error,sent_at,attempts FROM sends WHERE job_id=? AND occurrence=?').all(j.id, j.run_at);
   const { date, time } = epochToIst(j.run_at);
   return {
-    id: j.id, title: j.title, message: j.message, hasImage: !!j.media_file,
+    id: j.id, title: j.title, message: j.message, hasImage: !!j.media_file, imageUrl: j.media_url || null,
+    imagePurged: !!j.media_purged, linkPreview: j.link_preview !== 0,
     groups: JSON.parse(j.groups_json), date, time, runAt: j.run_at, startAt: j.start_at,
     gapMin: j.gap_min, gapMax: j.gap_max, repeatDays: JSON.parse(j.repeat_days),
     status: j.status, note: j.note, createdBy: j.created_by, updatedBy: j.updated_by,
     createdAt: j.created_at, updatedAt: j.updated_at, sends,
   };
+}
+
+// An image link is checked now (is it public, is it an image, is it small enough) so it
+// doesn't fail silently on Saturday morning. Google Drive share links are turned into
+// direct download links.
+async function checkImageUrl(raw) {
+  let u = String(raw || '').trim();
+  if (!u) return null;
+  const drive = u.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([\w-]{20,})/);
+  if (drive) u = `https://drive.google.com/uc?export=download&id=${drive[1]}`;
+  let url;
+  try { url = new URL(u); } catch { throw bad("That image link doesn't look right"); }
+  if (url.protocol !== 'https:') throw bad('The image link must start with https://');
+  if (u.length > 1000) throw bad('The image link is too long');
+  if (process.env.WABOX_SKIP_URL_CHECK === '1') return u;
+  let r;
+  try { r = await fetch(u, { method: 'GET', redirect: 'follow', headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(10000) }); }
+  catch { throw bad("Couldn't open the image link. Make sure it's public."); }
+  try { await r.body?.cancel(); } catch { /* ignore */ }
+  const type = r.headers.get('content-type') || '';
+  if (!r.ok) throw bad(`The image link answered with an error (${r.status}). Make sure anyone with the link can view it.`);
+  if (!/^image\/(jpeg|png|webp)/i.test(type)) throw bad(type.startsWith('text/html')
+    ? 'That link opens a web page, not an image. Use a direct link to the image file (or a public Google Drive file link).'
+    : 'The link must point to a JPG, PNG or WebP image.');
+  const size = Number((r.headers.get('content-range') || '').split('/')[1] || r.headers.get('content-length') || 0);
+  if (size > 5 * 1024 * 1024 && r.status !== 206) throw bad('That image is over 5 MB. Use a smaller one.');
+  if (size > 5 * 1024 * 1024 && (r.headers.get('content-range') || '').includes('/')) throw bad('That image is over 5 MB. Use a smaller one.');
+  return u;
 }
 
 async function validateJobInput(body, { requireFuture = true } = {}) {
@@ -214,7 +243,9 @@ async function validateJobInput(body, { requireFuture = true } = {}) {
   if (typeof repeatDays === 'string') { try { repeatDays = JSON.parse(repeatDays); } catch { repeatDays = []; } }
   repeatDays = [...new Set((Array.isArray(repeatDays) ? repeatDays : []).map(Number).filter(d => d >= 0 && d <= 6))].sort();
 
-  return { message, title, chosen, runAt, time: String(body.time), gapMin, gapMax, repeatDays };
+  const imageUrl = await checkImageUrl(body.imageUrl);
+  const linkPreview = body.linkPreview !== '0' && body.linkPreview !== false && body.linkPreview !== 'false';
+  return { message, title, chosen, runAt, time: String(body.time), gapMin, gapMax, repeatDays, imageUrl, linkPreview };
 }
 
 function saveMedia(file) {
@@ -256,7 +287,7 @@ api.post('/jobs/:id/groups/:gid/send-again', requireAdmin, wrap(async (req, res)
 const testSends = new Map();
 api.post('/test-send', upload.single('image'), wrap(async (req, res) => {
   const message = String(req.body?.message || '').trim();
-  if (!message && !req.file) throw bad('Write the message first');
+  if (!message && !req.file && !req.body?.imageUrl) throw bad('Write the message first');
   if (message.length > 4000) throw bad('Message is too long');
   const s = sched.state.wa;
   if (s.status !== 'ready' || !s.phone) throw bad("WhatsApp isn't connected, so a test can't be sent");
@@ -267,14 +298,17 @@ api.post('/test-send', upload.single('image'), wrap(async (req, res) => {
   if (today >= 40) throw bad('Daily limit for test messages reached (40). Try again tomorrow.');
   testSends.set(req.user.id, Date.now()); setSetting(dayKey, today + 1);
   const chatId = `${String(s.phone).replace(/\D/g, '')}@c.us`;
+  const imageUrl = req.file ? null : await checkImageUrl(req.body?.imageUrl);
+  const linkPreview = req.body?.linkPreview !== '0';
   let file = req.file;
-  if (!file && req.body?.jobImage) {
+  if (!file && !imageUrl && req.body?.jobImage) {
     const j = db.prepare('SELECT media_file, media_mime FROM jobs WHERE id=?').get(Number(req.body.jobImage));
     if (j?.media_file) file = { buffer: fs.readFileSync(path.join(DATA_DIR, 'media', j.media_file)), mimetype: j.media_mime };
   }
   try {
     if (file) await wa.sendImage(chatId, file.buffer.toString('base64'), file.mimetype, message);
-    else await wa.sendText(chatId, message);
+    else if (imageUrl) await wa.sendImageUrl(chatId, imageUrl, message);
+    else await wa.sendText(chatId, message, { linkPreview });
   } catch (e) { logEvent('warn', 'test_send', `Test by ${req.user.username} failed: ${e.message}`); throw bad('Test failed: ' + e.message); }
   logEvent('info', 'test_send', `Test message sent to own number by ${req.user.username}`);
   res.json({ ok: true, to: '+' + s.phone });
@@ -282,11 +316,12 @@ api.post('/test-send', upload.single('image'), wrap(async (req, res) => {
 
 api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
   const v = await validateJobInput(req.body);
+  if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
   const media = saveMedia(req.file);
   const now = Date.now();
-  const r = db.prepare(`INSERT INTO jobs(title,message,media_file,media_mime,groups_json,time_ist,run_at,start_at,gap_min,gap_max,
-    repeat_days,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?)`)
-    .run(v.title, v.message, media?.name || null, media?.mime || null, JSON.stringify(v.chosen), v.time, v.runAt,
+  const r = db.prepare(`INSERT INTO jobs(title,message,media_file,media_mime,media_url,link_preview,groups_json,time_ist,run_at,start_at,gap_min,gap_max,
+    repeat_days,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?)`)
+    .run(v.title, v.message, media?.name || null, media?.mime || null, v.imageUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt,
       v.runAt + sched.jitter(), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, req.user.username, now, now);
   audit(req.user.username, 'job_created', `#${r.lastInsertRowid} ${v.chosen.length} groups at ${formatIst(v.runAt)}`);
   res.json({ ok: true, id: r.lastInsertRowid });
@@ -297,13 +332,15 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   if (!job) throw bad('Job not found');
   if (job.status !== 'scheduled') throw bad('Only scheduled (not yet started) jobs can be edited');
   const v = await validateJobInput(req.body);
-  let mediaFile = job.media_file, mediaMime = job.media_mime;
-  if (req.body.removeImage === '1') { mediaFile = null; mediaMime = null; }
+  if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
+  let mediaFile = job.media_file, mediaMime = job.media_mime, mediaUrl = job.media_url;
+  if (req.body.removeImage === '1') { mediaFile = null; mediaMime = null; mediaUrl = null; }
   const media = saveMedia(req.file);
-  if (media) { mediaFile = media.name; mediaMime = media.mime; }
-  db.prepare(`UPDATE jobs SET title=?,message=?,media_file=?,media_mime=?,groups_json=?,time_ist=?,run_at=?,start_at=?,gap_min=?,gap_max=?,
+  if (media) { mediaFile = media.name; mediaMime = media.mime; mediaUrl = null; }
+  if (v.imageUrl) { mediaUrl = v.imageUrl; mediaFile = null; mediaMime = null; }
+  db.prepare(`UPDATE jobs SET title=?,message=?,media_file=?,media_mime=?,media_url=?,link_preview=?,groups_json=?,time_ist=?,run_at=?,start_at=?,gap_min=?,gap_max=?,
     repeat_days=?,note='',updated_by=?,updated_at=? WHERE id=? AND status='scheduled'`)
-    .run(v.title, v.message, mediaFile, mediaMime, JSON.stringify(v.chosen), v.time, v.runAt, v.runAt + sched.jitter(),
+    .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, v.runAt + sched.jitter(),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
   audit(req.user.username, 'job_edited', `#${job.id}`);
   res.json({ ok: true });

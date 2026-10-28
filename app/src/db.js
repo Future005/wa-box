@@ -94,6 +94,9 @@ addColumn('sends', 'attempt_at', 'INTEGER');
 addColumn('sends', 'wa_message_id', 'TEXT');
 addColumn('sends', 'override', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('sends', 'verified', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('jobs', 'media_url', 'TEXT');                          // image sent from a link: nothing stored
+addColumn('jobs', 'media_purged', 'INTEGER NOT NULL DEFAULT 0');  // uploaded image deleted after sending
+addColumn('jobs', 'link_preview', 'INTEGER NOT NULL DEFAULT 1');
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS sends_dedupe ON sends(group_id, msg_hash);

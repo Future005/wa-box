@@ -151,13 +151,20 @@
                   <label class="attach" id="attach">
                     <input type="file" name="image" id="image" accept="image/jpeg,image/png,image/webp">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>
-                    <span id="attach-label">Add image</span>
+                    <span id="attach-label">Upload image</span>
                   </label>
+                  <button type="button" class="link" id="image-link-btn">Use an image link</button>
                   <button type="button" class="link hidden" id="image-remove">Remove image</button>
                   <span class="spacer"></span>
                   <button type="button" class="link" id="tpl-save">Save as template</button>
                 </div>
+                <div class="image-link hidden" id="image-link-row">
+                  <input type="url" id="image-url" placeholder="https://… link to a JPG/PNG, or a public Google Drive file" autocomplete="off" aria-label="Image link">
+                  <button type="button" class="btn btn-ghost btn-sm" id="image-url-apply">Add</button>
+                </div>
               </div>
+              <p class="hint" id="image-note">Uploaded images are deleted from WA Box 3 days after the last send. Image links are never stored; the image is fetched when it's sent.</p>
+              <label class="switch hidden" id="link-preview-row"><input type="checkbox" id="link-preview" checked><span class="track"></span><span>Show a preview card for the link</span></label>
             </fieldset>
 
             <fieldset class="block">
@@ -210,6 +217,7 @@
               <div class="phone-body">
                 <div class="bubble" id="pv-bubble">
                   <img id="pv-image" class="hidden" alt="">
+                  <div class="link-card hidden" id="pv-link"><b id="pv-link-host"></b><span id="pv-link-url"></span></div>
                   <div id="pv-text" class="bubble-text"><span class="placeholder">Your message appears here as the group will see it.</span></div>
                   <span class="bubble-time" id="pv-time"></span>
                 </div>

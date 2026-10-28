@@ -261,7 +261,7 @@
     return `<button class="job-row" type="button" data-job="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span>
       <span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
-        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(j.createdBy.split('@')[0])}</span></span>
+        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(j.createdBy.split('@')[0])}</span></span>
         ${j.status === 'running' ? `<span class="progress"><i data-w="${pct}"></i></span>` : ''}
         ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
       </span>${pill(j.status)}</button>`;
@@ -294,7 +294,7 @@
         <dt>Created by</dt><dd>${esc(j.createdBy)}</dd>
         ${j.updatedBy !== j.createdBy ? `<dt>Last edited by</dt><dd>${esc(j.updatedBy)}</dd>` : ''}
       </dl>
-      <div class="mini-bubble"><div class="bubble">${j.hasImage ? `<img src="api/jobs/${j.id}/image" alt="">` : ''}<div class="bubble-text">${waFormat(j.message)}</div><span class="bubble-time">${ist(j.runAt).time}</span></div></div>
+      <div class="mini-bubble"><div class="bubble">${j.hasImage ? `<img src="api/jobs/${j.id}/image" alt="">` : j.imageUrl ? `<img src="${esc(j.imageUrl)}" alt="">` : j.imagePurged ? '<p class="hint">Image deleted after sending.</p>' : ''}<div class="bubble-text">${waFormat(j.message)}</div><span class="bubble-time">${ist(j.runAt).time}</span></div></div>
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
         const canDecide = s && ['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(s.status);
         const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
@@ -442,7 +442,7 @@
   function blankCompose() {
     const last = store.get('wabox.lastTime') || '10:00';
     return { mode: 'new', id: null, picked: new Map(), message: '', date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
-      gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, dirty: false, search: '' };
+      gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, imageLink: null, linkPreview: true, dirty: false, search: '' };
   }
   async function openCompose() {
     S.composeQuery = location.hash.includes('?') ? '?' + location.hash.split('?')[1] : '';
@@ -455,15 +455,17 @@
       if (p.edit && j.status !== 'scheduled') { toast("This message has started sending, so it can't be edited. You can duplicate it.", true); location.hash = `compose?dup=${j.id}`; return; }
       c.mode = p.edit ? 'edit' : 'dup'; c.id = p.edit ? j.id : null;
       c.message = j.message; j.groups.forEach(g => c.picked.set(g.id, { id: g.id, name: g.name }));
+      c.imageLink = j.imageUrl || null; c.linkPreview = j.linkPreview;
       if (p.edit) { c.date = j.date; c.time = j.time; c.repeat = [...j.repeatDays]; c.keepImage = j.hasImage; c.imageUrl = j.hasImage ? `api/jobs/${j.id}/image` : null; }
       else { c.time = j.time; c.repeat = [...j.repeatDays]; }
       c.gapMin = j.gapMin; c.gapMax = j.gapMax;
       c.pace = j.gapMin === 60 && j.gapMax === 180 ? 'gentle' : j.gapMin === 40 && j.gapMax === 120 ? 'standard' : 'custom';
-      if (p.dup && j.hasImage) note = "The image from the original isn't copied. Add it again if you need it.";
+      if (p.dup && (j.hasImage || j.imagePurged)) note = "The uploaded image from the original isn't copied. Add it again if you need it.";
+      if (p.edit && j.imagePurged) note = 'The uploaded image was already deleted. Add it again if you need it.';
     } else {
       const d = store.get(DRAFT_KEY);
       if (d && (d.message || (d.picked || []).length)) {
-        Object.assign(c, d, { picked: new Map((d.picked || []).map(g => [g.id, g])), image: null, imageUrl: null, keepImage: false, dirty: false });
+        Object.assign(c, d, { picked: new Map((d.picked || []).map(g => [g.id, g])), image: null, imageUrl: null, keepImage: false, dirty: false, linkPreview: d.linkPreview !== false });
         if (istEpoch(c.date, c.time) < Date.now()) c.date = ist(Date.now() + DAY).date;
         note = 'Draft restored.';
       }
@@ -480,6 +482,7 @@
     $('#date').value = c.date; $('#time').value = c.time;
     $('#image').value = '';
     $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax;
+    $('#link-preview').checked = c.linkPreview; $('#image-url').value = c.imageLink || ''; $('#image-link-row').classList.add('hidden');
     $('#repeat-on').checked = c.repeat.length > 0;
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
     $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : 'Cancel';
@@ -488,7 +491,7 @@
   }
   function markDirty() {
     const c = C(); if (!c) return; c.dirty = true;
-    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax });
+    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, imageLink: c.imageLink, linkPreview: c.linkPreview });
     updateCompose();
   }
   $('#draft-note').addEventListener('click', e => { if (e.target.id === 'draft-clear') { store.del(DRAFT_KEY); S.params = {}; openCompose(); } });
@@ -567,21 +570,35 @@
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) { toast('Use a JPG, PNG or WebP image', true); e.target.value = ''; return; }
     if (f.size > 5 * 1024 * 1024) { toast('That image is over 5 MB. Use a smaller one.', true); e.target.value = ''; return; }
     if (c.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(c.imageUrl);
-    c.image = f; c.imageUrl = URL.createObjectURL(f); c.removeImage = false; c.keepImage = false;
+    c.image = f; c.imageUrl = URL.createObjectURL(f); c.removeImage = false; c.keepImage = false; c.imageLink = null; $('#image-link-row').classList.add('hidden');
     renderImage(); markDirty();
   });
   $('#image-remove').addEventListener('click', () => {
     const c = C(); if (c.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(c.imageUrl);
-    c.removeImage = c.keepImage; c.image = null; c.imageUrl = null; c.keepImage = false; $('#image').value = '';
+    c.removeImage = c.keepImage || (c.mode === 'edit' && !!c.imageLink); c.image = null; c.imageUrl = null; c.keepImage = false; c.imageLink = null; $('#image').value = ''; $('#image-url').value = '';
     renderImage(); markDirty();
   });
   function renderImage() {
     const c = C();
-    $('#attach-label').textContent = c.imageUrl ? (c.image ? c.image.name : 'Image attached') : 'Add image';
-    $('#image-remove').classList.toggle('hidden', !c.imageUrl);
+    const src = c.imageLink || c.imageUrl;
+    $('#attach-label').textContent = c.imageUrl ? (c.image ? c.image.name : 'Image attached') : 'Upload image';
+    $('#image-link-btn').textContent = c.imageLink ? 'Image from link ✓' : 'Use an image link';
+    $('#image-remove').classList.toggle('hidden', !src);
     const img = $('#pv-image');
-    if (c.imageUrl) { img.src = c.imageUrl; img.classList.remove('hidden'); } else { img.removeAttribute('src'); img.classList.add('hidden'); }
+    if (src) { img.src = src; img.classList.remove('hidden'); img.onerror = () => { if (c.imageLink) toast("That image link didn't load. Check it's public and points to an image.", true); }; }
+    else { img.removeAttribute('src'); img.classList.add('hidden'); }
   }
+  $('#image-link-btn').addEventListener('click', () => { const row = $('#image-link-row'); row.classList.toggle('hidden'); if (!row.classList.contains('hidden')) $('#image-url').focus(); });
+  const applyImageLink = () => {
+    const v = $('#image-url').value.trim(); const c = C();
+    if (!/^https:\/\/\S+$/i.test(v)) { toast('Paste a link that starts with https://', true); return; }
+    if (c.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(c.imageUrl);
+    c.imageLink = v; c.image = null; c.imageUrl = null; c.removeImage = c.keepImage; c.keepImage = false; $('#image').value = '';
+    $('#image-link-row').classList.add('hidden'); renderImage(); markDirty();
+  };
+  $('#image-url-apply').addEventListener('click', applyImageLink);
+  $('#image-url').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyImageLink(); } });
+  $('#link-preview').addEventListener('change', e => { C().linkPreview = e.target.checked; markDirty(); });
   $('#tpl-save').addEventListener('click', async () => {
     const m = $('#message').value.trim();
     if (!m) { toast('Write the message first', true); return; }
@@ -644,6 +661,12 @@
     $('#pv-group').textContent = picked[0]?.name || 'Your group';
     $('#pv-more').textContent = picked.length > 1 ? `and ${plural(picked.length - 1, 'other group')}` : picked.length ? 'WhatsApp group' : 'Pick groups to preview';
     $('#pv-text').innerHTML = c.message.trim() ? waFormat(c.message) : '<span class="placeholder">Your message appears here as the group will see it.</span>';
+    const links = c.message.match(/https?:\/\/[^\s<]+[^\s<.,!?)]/g) || [];
+    const hasImg = !!(c.imageLink || c.imageUrl);
+    $('#link-preview-row').classList.toggle('hidden', !links.length || hasImg);
+    const showCard = links.length && c.linkPreview && !hasImg;
+    $('#pv-link').classList.toggle('hidden', !showCard);
+    if (showCard) { try { const u = new URL(links[0]); $('#pv-link-host').textContent = u.hostname.replace(/^www\./, ''); $('#pv-link-url').textContent = links[0]; } catch { $('#pv-link').classList.add('hidden'); } }
     // timing
     const validTime = c.date && /^\d{2}:\d{2}$/.test(c.time || '');
     const runAt = validTime ? istEpoch(c.date, c.time) : null;
@@ -670,6 +693,10 @@
     else if (runAt < Date.now() - 60000) checks.push(['bad', 'That time has already passed. Choose a later time.']);
     else if (runAt < Date.now() + 3 * 60000) checks.push(['warn', 'This starts within the next few minutes.']);
     if ($('#repeat-on').checked && !c.repeat.length) checks.push(['bad', 'Pick the days it should repeat on, or turn repeat off.']);
+    const shorteners = /(^|\/\/)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|cutt\.ly|rb\.gy|is\.gd|ow\.ly|shorturl\.at|tiny\.cc)\//i;
+    if (links.some(l => shorteners.test(l))) checks.push(['warn', 'Short links (bit.ly and similar) are often treated as spam. Use the full link.']);
+    if (links.length > 3) checks.push(['warn', `This has ${links.length} links. Messages with many links look like spam; keep it to one or two.`]);
+    if (links.length && hasImg) checks.push(['ok', 'With an image attached, the link is sent in the caption without a preview card.']);
     const gone = picked.filter(g => !S.groups.some(x => x.id === g.id));
     if (gone.length) checks.push(['bad', `${plural(gone.length, 'group')} ${gone.length === 1 ? 'is' : 'are'} no longer available. Remove ${gone.length === 1 ? 'it' : 'them'} to continue.`]);
     if (c.pace === 'custom' && (c.gapMin < 30 || c.gapMax < c.gapMin)) checks.push(['warn', 'Waits under 30 seconds are raised to 30, and the longest wait must be at least the shortest.']);
@@ -700,9 +727,9 @@
 
   $('#test-send').addEventListener('click', async () => {
     const c = C();
-    if (!c.message.trim() && !c.imageUrl) { toast('Write the message first', true); return; }
-    const fd = new FormData(); fd.set('message', c.message);
-    if (c.image) fd.set('image', c.image); else if (c.keepImage && c.id) fd.set('jobImage', String(c.id));
+    if (!c.message.trim() && !c.imageUrl && !c.imageLink) { toast('Write the message first', true); return; }
+    const fd = new FormData(); fd.set('message', c.message); fd.set('linkPreview', c.linkPreview ? '1' : '0');
+    if (c.image) fd.set('image', c.image); else if (c.imageLink) fd.set('imageUrl', c.imageLink); else if (c.keepImage && c.id) fd.set('jobImage', String(c.id));
     const b = $('#test-send'); b.disabled = true;
     try { const r = await api('test-send', { method: 'POST', form: fd }); toast(`Test sent to ${r.to}. Open "Message yourself" in WhatsApp.`); $('#test-hint').textContent = `Last test sent ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}. Check the "Message yourself" chat on the phone.`; }
     catch (err) { toast(err.message, true); }
@@ -719,6 +746,8 @@
     fd.set('gapMin', String(Math.max(30, c.gapMin))); fd.set('gapMax', String(Math.max(30, c.gapMin, c.gapMax)));
     fd.set('repeatDays', JSON.stringify($('#repeat-on').checked ? c.repeat : []));
     if (c.image) fd.set('image', c.image);
+    if (c.imageLink) fd.set('imageUrl', c.imageLink);
+    fd.set('linkPreview', c.linkPreview ? '1' : '0');
     if (c.removeImage) fd.set('removeImage', '1');
     const btn = $('#job-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Saving…';
     try {

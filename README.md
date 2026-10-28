@@ -63,3 +63,19 @@ cd app && npm ci
 GATEWAY_URL=http://localhost:2785 GATEWAY_API_KEY=... ADMIN_PASSWORD=change-me-now COOKIE_INSECURE=true DATA_DIR=./data npm start
 # open http://localhost:3000/wabox/
 ```
+
+## Why Gateway (and could we drop it?)
+
+WA Box has two layers:
+
+| Layer | Job | Who could replace it |
+|---|---|---|
+| **Gateway** (engine) | Keeps a WhatsApp Web session alive in headless Chromium: QR login, reconnects, WhatsApp Web version pinning, sending, reading chats. | Embedding `whatsapp-web.js` directly in WA Box. Same engine underneath, same ban risk. |
+| **WA Box** (product) | Team logins and roles, group lists, scheduling and repeats, pacing and caps, duplicate guard, send verification, alerts, logs, archive. | Nothing in Gateway does this. Gateway's own dashboard is a developer console: no scheduler, no team, no safety rules. |
+
+We keep Gateway because it isolates the heavy, crash-prone part (Chromium) in its own container with its own restarts and hardening, and its maintainers track WhatsApp Web changes for us. WA Box talks to it only through `app/src/gateway.js` (~130 lines), so swapping in direct `whatsapp-web.js`, or Meta's official API for groups we create, is a contained change if we ever need it.
+
+## Images and links
+- **Upload an image**: kept only until it's no longer needed, 3 days after a one-off message finishes (so "Send again" still works). Weekly messages keep theirs until stopped. Unused files are cleaned up hourly.
+- **Image link**: nothing is stored. The link is checked when you schedule (public? an image? under 5 MB?) and the image is fetched at send time. Public Google Drive file links are converted automatically.
+- **Links in text**: WhatsApp shows a preview card by default; it can be switched off per message. Short links (bit.ly etc.) and messages with many links get a spam warning.

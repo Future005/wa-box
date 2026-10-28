@@ -89,14 +89,20 @@ async function typing(chatId, state = 'typing') {
   return call('POST', `/sessions/${id}/chats/typing`, { chatId, state });
 }
 
-async function sendText(chatId, text) {
+async function sendText(chatId, text, { linkPreview = true } = {}) {
   const id = await ensureSession();
-  return call('POST', `/sessions/${id}/messages/send-text`, { chatId, text }, { timeoutMs: SEND_TIMEOUT_MS });
+  return call('POST', `/sessions/${id}/messages/send-text`, { chatId, text, ...(linkPreview ? {} : { linkPreview: false }) }, { timeoutMs: SEND_TIMEOUT_MS });
 }
 
 async function sendImage(chatId, base64, mimetype, caption) {
   const id = await ensureSession();
   return call('POST', `/sessions/${id}/messages/send-image`, { chatId, base64, mimetype, caption: caption || undefined }, { timeoutMs: SEND_TIMEOUT_MS * 2 });
+}
+
+/** Image fetched by the gateway from a public https link at send time. */
+async function sendImageUrl(chatId, url, caption) {
+  const id = await ensureSession();
+  return call('POST', `/sessions/${id}/messages/send-image`, { chatId, url, caption: caption || undefined }, { timeoutMs: SEND_TIMEOUT_MS * 2 });
 }
 
 /** Recent messages in a chat, read live from WhatsApp Web (oldest first). */
@@ -120,4 +126,4 @@ const SEND_TIMEOUT_MS = Number(process.env.WABOX_SEND_TIMEOUT_MS || 60000);
 
 function resetSession() { sessionId = null; }
 
-module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, history, definitelyNotSent, GatewayError };
+module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, sendImageUrl, history, definitelyNotSent, GatewayError };

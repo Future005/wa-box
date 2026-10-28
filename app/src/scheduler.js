@@ -246,11 +246,15 @@ async function sendToGroup(job, group, cfg, msgHash) {
     try { await wa.typing(group.id, 'typing'); } catch { /* non-fatal */ }
     await sleep(FAST ? 1 : Math.min(5000, 2000 + job.message.length * 15) + rand(0, 800));
     let r;
-    if (job.media_file) {
+    if (job.media_url) {
+      r = await wa.sendImageUrl(group.id, job.media_url, job.message);
+    } else if (job.media_file) {
       const buf = fs.readFileSync(path.join(DATA_DIR, 'media', job.media_file));
       r = await wa.sendImage(group.id, buf.toString('base64'), job.media_mime, job.message);
+    } else if (job.media_purged) {
+      throw Object.assign(new Error('The image was already deleted from WA Box. Duplicate the message and attach it again.'), { status: 410 });
     } else {
-      r = await wa.sendText(group.id, job.message);
+      r = await wa.sendText(group.id, job.message, { linkPreview: job.link_preview !== 0 });
     }
     try { await wa.typing(group.id, 'paused'); } catch { /* non-fatal */ }
     upsertSend(job, group, { status: 'sent', sent_at: Date.now(), wa_message_id: r?.messageId || r?.id || null });
@@ -286,7 +290,7 @@ async function runJob(job) {
   state.runningJobId = job.id;
   db.prepare("UPDATE jobs SET status='running', note='', updated_at=? WHERE id=?").run(Date.now(), job.id);
   logEvent('info', 'job', `Started: ${JSON.parse(job.groups_json).length} groups${cfg.dryRun ? ' (practice mode)' : ''}`, { jobId: job.id });
-  const msgHash = hashMessage(job.message, job.media_file);
+  const msgHash = hashMessage(job.message, job.media_url || job.media_file);
   const groups = JSON.parse(job.groups_json);
   const gapMin = Math.max(HARD_MIN_GAP_S, job.gap_min);
   const gapMax = Math.max(gapMin, job.gap_max);
@@ -408,8 +412,34 @@ async function tick() {
   }
 }
 
+// ---------- image retention ----------
+// Uploaded images are only kept until they're no longer needed: 3 days after a one-off
+// message finishes or a message is cancelled (long enough for "Send again"). Weekly
+// messages keep theirs until they're stopped. Image links are never stored.
+const MEDIA_KEEP_MS = 3 * 24 * 3600 * 1000;
+function purgeMedia(now = Date.now()) {
+  const dir = path.join(DATA_DIR, 'media');
+  const jobs = db.prepare("SELECT id, media_file FROM jobs WHERE media_file IS NOT NULL AND status IN ('done','done_with_errors','cancelled') AND updated_at < ?").all(now - MEDIA_KEEP_MS);
+  for (const j of jobs) {
+    try { fs.rmSync(path.join(dir, j.media_file), { force: true }); } catch { /* already gone */ }
+    db.prepare('UPDATE jobs SET media_file=NULL, media_purged=1 WHERE id=?').run(j.id);
+    logEvent('info', 'cleanup', 'Deleted the uploaded image (no longer needed)', { jobId: j.id });
+  }
+  // Files no job points to (replaced while editing, or a failed save), older than an hour.
+  const used = new Set(db.prepare('SELECT media_file FROM jobs WHERE media_file IS NOT NULL').all().map(r => r.media_file));
+  let orphans = 0;
+  for (const f of (fs.existsSync(dir) ? fs.readdirSync(dir) : [])) {
+    if (used.has(f)) continue;
+    try { if (now - fs.statSync(path.join(dir, f)).mtimeMs > 3600 * 1000) { fs.rmSync(path.join(dir, f), { force: true }); orphans++; } } catch { /* ignore */ }
+  }
+  if (orphans) logEvent('info', 'cleanup', `Deleted ${orphans} unused image file(s)`);
+  return jobs.length + orphans;
+}
+
 let timer = null;
 function startLoop() {
+  purgeMedia();
+  setInterval(() => { try { purgeMedia(); } catch (e) { logEvent('warn', 'cleanup', e.message); } }, 3600 * 1000).unref?.();
   logEvent('info', 'scheduler', `Started (instance ${OWNER})`);
   setTimeout(tick, FAST ? 10 : 3000);
   timer = setInterval(tick, TICK_MS);
@@ -448,6 +478,7 @@ function sendAgain(jobId, groupId, by) {
   if (!['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(row.status)) throw new Error('This group already got it');
   if (JSON.parse(job.repeat_days).length && row.occurrence !== job.run_at) throw new Error('This weekly message has moved on to its next date. Use "Duplicate" to send it again.');
   if (!['done', 'done_with_errors', 'running', 'scheduled'].includes(job.status)) throw new Error('This message was cancelled. Use "Duplicate" to send it again.');
+  if (job.media_purged) throw new Error('Its image was already deleted from WA Box. Use "Duplicate" and attach the image again.');
   db.prepare("UPDATE sends SET status='retry', attempts=0, override=1, error=? WHERE id=?").run(`Send again requested by ${by}`, row.id);
   if (['done', 'done_with_errors'].includes(job.status)) {
     db.prepare("UPDATE jobs SET status='running', run_at=?, start_at=?, note=?, updated_at=? WHERE id=?").run(row.occurrence, Date.now(), `Sending again to ${row.group_name}`, Date.now(), jobId);
@@ -472,4 +503,4 @@ function health() {
   };
 }
 
-module.exports = { startLoop, stop, tick, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };
+module.exports = { startLoop, stop, tick, purgeMedia, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };

@@ -40,7 +40,7 @@ const server = http.createServer((req, res) => {
       const modes = gw.behaviour[chat] || ['ok'];
       const n = gw.calls[chat] = (gw.calls[chat] || 0) + 1;
       const mode = modes[Math.min(n - 1, modes.length - 1)];
-      const deliver = () => gw.delivered.push({ chatId: chat, text: b.text ?? b.caption, at: Date.now(), id: 'm' + gw.delivered.length });
+      const deliver = () => gw.delivered.push({ chatId: chat, text: b.text ?? b.caption, url: b.url, base64: !!b.base64, linkPreview: b.linkPreview, at: Date.now(), id: 'm' + gw.delivered.length });
       if (mode === 'ok') { deliver(); return j(201, { messageId: 'm' + (gw.delivered.length - 1) }); }
       if (mode === 'timeout_delivered') { deliver(); return setTimeout(() => j(201, {}), 2000); }
       if (mode === 'timeout_lost') return setTimeout(() => j(201, {}), 2000);
@@ -59,11 +59,11 @@ const G = n => ({ id: `${n}@g.us`, name: `Group ${n}` });
 function addGroups(...ns) {
   for (const n of ns) db.prepare('INSERT OR REPLACE INTO wa_groups(id,name,active,updated_at) VALUES(?,?,1,?)').run(G(n).id, G(n).name, Date.now());
 }
-function addJob({ groups, message = 'Hello *team* 🎉', runAt = Date.now(), startAt, repeat = [], gap = 30, timeIst } = {}) {
+function addJob({ groups, message = 'Hello *team* 🎉', runAt = Date.now(), startAt, repeat = [], gap = 30, timeIst, mediaUrl = null, mediaFile = null, linkPreview = 1 } = {}) {
   const t = time.epochToIst(runAt).time;
-  return db.prepare(`INSERT INTO jobs(title,message,groups_json,time_ist,run_at,start_at,gap_min,gap_max,repeat_days,status,created_by,updated_by,created_at,updated_at)
-    VALUES('',?,?,?,?,?,?,?,?,'scheduled','test','test',?,?)`).run(message, JSON.stringify(groups.map(G)), timeIst || t, runAt, startAt ?? runAt, gap, gap,
-    JSON.stringify(repeat), Date.now(), Date.now()).lastInsertRowid;
+  return db.prepare(`INSERT INTO jobs(title,message,groups_json,time_ist,run_at,start_at,gap_min,gap_max,repeat_days,status,created_by,updated_by,created_at,updated_at,media_url,media_file,media_mime,link_preview)
+    VALUES('',?,?,?,?,?,?,?,?,'scheduled','test','test',?,?,?,?,?,?)`).run(message, JSON.stringify(groups.map(G)), timeIst || t, runAt, startAt ?? runAt, gap, gap,
+    JSON.stringify(repeat), Date.now(), Date.now(), mediaUrl, mediaFile, mediaFile ? 'image/png' : null, linkPreview).lastInsertRowid;
 }
 const job = id => db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
 const sends = id => db.prepare('SELECT * FROM sends WHERE job_id=? ORDER BY id').all(id);
@@ -310,4 +310,59 @@ test('every send and failure is written to the event log', async () => {
   const ev = db.prepare("SELECT level, kind, message FROM events WHERE kind='send'").all();
   assert.ok(ev.some(e => e.level === 'info' && /Sent/.test(e.message)));
   assert.ok(ev.some(e => e.level === 'error' && /Failed/.test(e.message)));
+});
+
+test('image from a link: sent by link, nothing stored on the server', async () => {
+  addGroups(1);
+  const before = fs.readdirSync(path.join(DATA, 'media')).length;
+  addJob({ groups: [1], message: 'Poster for Saturday 👇', mediaUrl: 'https://example.com/poster.png' });
+  await runUntilIdle();
+  assert.equal(gw.delivered[0].url, 'https://example.com/poster.png');
+  assert.equal(gw.delivered[0].text, 'Poster for Saturday 👇');
+  assert.equal(fs.readdirSync(path.join(DATA, 'media')).length, before);
+});
+
+test('link preview switched off is passed to WhatsApp; on by default', async () => {
+  addGroups(1, 2);
+  addJob({ groups: [1], message: 'Read this https://example.com/blog', linkPreview: 0 });
+  await runUntilIdle();
+  addJob({ groups: [2], message: 'And this https://example.com/guide' });
+  await runUntilIdle();
+  assert.equal(gw.delivered.find(d => d.chatId === G(1).id).linkPreview, false);
+  assert.equal(gw.delivered.find(d => d.chatId === G(2).id).linkPreview, undefined);
+});
+
+test('uploaded image: sent, then deleted 3 days after the message is done; weekly messages keep theirs', async () => {
+  addGroups(1);
+  const media = path.join(DATA, 'media');
+  fs.writeFileSync(path.join(media, 'a.png'), Buffer.from([137, 80, 78, 71]));
+  fs.writeFileSync(path.join(media, 'b.png'), Buffer.from([137, 80, 78, 71]));
+  const once = addJob({ groups: [1], message: 'With image', mediaFile: 'a.png' });
+  await runUntilIdle();
+  assert.equal(gw.delivered[0].base64, true);
+  const weekly = addJob({ groups: [1], message: 'Weekly with image', mediaFile: 'b.png', runAt: Date.now() + 86400e3, repeat: [1] });
+  sched.purgeMedia(Date.now());                       // too soon: kept for "Send again"
+  assert.ok(fs.existsSync(path.join(media, 'a.png')));
+  db.prepare('UPDATE jobs SET updated_at=? WHERE id IN (?,?)').run(Date.now() - 4 * 86400e3, once, weekly);
+  sched.purgeMedia(Date.now());
+  assert.ok(!fs.existsSync(path.join(media, 'a.png')), 'one-off image deleted');
+  assert.equal(job(once).media_purged, 1);
+  assert.ok(fs.existsSync(path.join(media, 'b.png')), 'weekly image kept');
+});
+
+test('"Send again" after the image was deleted asks to duplicate instead of sending without it', async () => {
+  addGroups(1);
+  gw.behaviour[G(1).id] = ['reject400'];
+  const id = addJob({ groups: [1], message: 'Img msg', mediaUrl: null });
+  await runUntilIdle();
+  db.prepare('UPDATE jobs SET media_purged=1 WHERE id=?').run(id);
+  assert.throws(() => sched.sendAgain(id, G(1).id, 'tester'), /Duplicate/);
+});
+
+test('unused image files (e.g. replaced while editing) are cleaned up', async () => {
+  const f = path.join(DATA, 'media', 'orphan.png');
+  fs.writeFileSync(f, Buffer.from([1]));
+  const old = (Date.now() - 2 * 3600e3) / 1000; fs.utimesSync(f, old, old);
+  sched.purgeMedia(Date.now());
+  assert.ok(!fs.existsSync(f));
 });
