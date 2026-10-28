@@ -203,7 +203,7 @@
         <form class="card" id="user-form">
           <div class="card-head"><h2>Add a person</h2></div>
           <div class="grid3">
-            <label>Username<input name="username" required pattern="[A-Za-z0-9._\-]{3,32}" autocomplete="off"></label>
+            <label>Username<input name="username" required pattern="[A-Za-z0-9._@+\-]{3,64}" autocomplete="off"></label>
             <label>Temporary password<input name="password" type="text" minlength="10" required autocomplete="off"></label>
             <label>Role<select name="role"><option value="member">Member (schedule only)</option><option value="admin">Admin</option></select></label>
           </div>

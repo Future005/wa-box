@@ -8,6 +8,7 @@ const MAX_AGE_MS = 7 * 24 * 3600 * 1000; // absolute 7 days
 const LOCK_AFTER = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const MIN_PASSWORD = 10;
+const USERNAME_RE = /^[a-zA-Z0-9._@+-]{3,64}$/;
 
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 // Fixed dummy hash so unknown usernames take the same time as wrong passwords.
@@ -20,7 +21,7 @@ function validatePassword(pw) {
 }
 
 function createUser(username, password, role, mustChange = true) {
-  if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username || '')) throw new Error('Username: 3-32 letters, numbers, . _ -');
+  if (!USERNAME_RE.test(username || '')) throw new Error('Username: 3-64 characters (letters, numbers, . _ - @ +), e.g. a name or an email');
   const err = validatePassword(password);
   if (err) throw new Error(err);
   if (!['admin', 'member'].includes(role)) throw new Error('Invalid role');
@@ -31,9 +32,19 @@ function createUser(username, password, role, mustChange = true) {
 
 /** Seed the first admin from env (Coolify generates the password). */
 function seedAdmin() {
-  const count = db.prepare('SELECT COUNT(*) n FROM users').get().n;
-  if (count > 0) return;
   const username = process.env.ADMIN_USER || 'admin';
+  const count = db.prepare('SELECT COUNT(*) n FROM users').get().n;
+  if (count > 0) {
+    // ADMIN_USER changed after first boot: rename the original seeded 'admin' account once.
+    const taken = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+    const original = db.prepare("SELECT id FROM users WHERE username = 'admin' AND role = 'admin'").get();
+    if (!taken && original && USERNAME_RE.test(username)) {
+      db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, original.id);
+      audit('system', 'admin_renamed', `admin -> ${username}`);
+      console.log(`[auth] admin account renamed to ${username}`);
+    }
+    return;
+  }
   let password = process.env.ADMIN_PASSWORD;
   if (!password || password.length < MIN_PASSWORD) {
     password = crypto.randomBytes(12).toString('base64url');

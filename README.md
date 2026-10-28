@@ -15,7 +15,7 @@ Only `wabox` is public. Gateway has no domain and no published port.
 
 ## Using it
 
-1. **Log in** at `/wabox`. First admin is `admin`; the password is Coolify's generated `SERVICE_PASSWORD_ADMIN`
+1. **Log in** at `/wabox`. First admin is `admin@example.com`; the password is Coolify's generated `SERVICE_PASSWORD_ADMIN`
    (app → Environment Variables). You must change it on first login.
 2. **WhatsApp tab (admins):** press *Connect / show QR*, then on the phone: WhatsApp → Settings → Linked devices → Link a device → scan.
    Use a spare number if you can.
