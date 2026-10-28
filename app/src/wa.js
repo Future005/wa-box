@@ -46,6 +46,7 @@ const sendImage = (chatId, base64, mimetype, caption) =>
   call('POST', '/send-image', { chatId, base64, mimetype, caption: caption || undefined }, { timeoutMs: SEND_TIMEOUT_MS * 2 });
 const sendImageUrl = (chatId, url, caption) =>
   call('POST', '/send-image', { chatId, url, caption: caption || undefined }, { timeoutMs: SEND_TIMEOUT_MS * 2 });
+const receipts = ids => call('POST', '/receipts', { ids }, { timeoutMs: 60000 });
 const history = (chatId, limit = 25) =>
   call('GET', `/history?chatId=${encodeURIComponent(chatId)}&limit=${limit}`, undefined, { timeoutMs: 45000 });
 
@@ -64,5 +65,5 @@ function definitelyNotSent(err) {
 const ensureSession = async () => 'wabox';
 const resetSession = () => {};
 
-module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, sendImageUrl, history,
+module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, sendImageUrl, history, receipts,
   definitelyNotSent, EngineError, GatewayError: EngineError };

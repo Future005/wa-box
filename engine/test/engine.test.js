@@ -22,7 +22,8 @@ class FakeClient extends EventEmitter {
   async logout() {}
   async getChats() { return [{ isGroup: true, id: { _serialized: '1@g.us' }, name: 'A' }, { isGroup: false, id: { _serialized: '9@c.us' }, name: 'Someone' }]; }
   async getChatById(id) { return { fetchMessages: async () => this.sent.filter(s => s.chatId === id).map((s, i) => ({ id: { _serialized: 'm' + i }, body: typeof s.content === 'string' ? s.content : s.opts.caption, fromMe: true, timestamp: 1 })), sendStateTyping: async () => {}, clearState: async () => {} }; }
-  async sendMessage(chatId, content, opts) { if (this.failSend) throw new Error('Evaluation failed'); this.sent.push({ chatId, content, opts }); return { id: { _serialized: 'true_' + chatId + '_X' } }; }
+  async getMessageById(id) { return this.sent.find(s => s.id === id) ? { ack: 1 } : null; }
+  async sendMessage(chatId, content, opts) { if (this.failSend) throw new Error('Evaluation failed'); const id = 'true_' + chatId + '_' + this.sent.length; this.sent.push({ chatId, content, opts, id }); return { id: { _serialized: id } }; }
 }
 FakeClient.autoReady = true;
 class FakeAuth { constructor(o) { this.o = o; } }
@@ -135,6 +136,17 @@ test('restart waits for a message that is being sent', async () => {
   await engine.restart('test');
   assert.ok(Date.now() - t0 >= 280, 'waited for the send to finish');
   assert.equal(made[0].destroyed, true);
+});
+
+test('delivery receipts: from WhatsApp events when seen, else asked from WhatsApp Web', async () => {
+  await engine.start(); await tick();
+  const a = (await call('POST', '/send-text', { chatId: '1@g.us', text: 'one' })).body.messageId;
+  const b = (await call('POST', '/send-text', { chatId: '1@g.us', text: 'two' })).body.messageId;
+  made[0].emit('message_ack', { fromMe: true, id: { _serialized: a } }, 2);
+  const r = (await call('POST', '/receipts', { ids: [a, b] })).body;
+  assert.equal(r[a], 2, 'delivered (from event)');
+  assert.equal(r[b], 1, 'sent (asked WhatsApp Web)');
+  assert.equal((await call('POST', '/receipts', { ids: [] })).status, 400);
 });
 
 after(() => { server.closeAllConnections(); server.close(); fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }); });

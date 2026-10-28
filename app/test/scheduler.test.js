@@ -17,7 +17,7 @@ Object.assign(process.env, {
 });
 
 // ---------- fake engine (same API as engine/src/server.js) ----------
-const gw = { delivered: [], behaviour: {}, calls: {}, status: 'ready' };
+const gw = { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [] };
 // behaviour[chatId] = array of modes used in order; last one repeats:
 //   ok | timeout_delivered | timeout_lost | reject400 | reject409 | error500_delivered
 const server = http.createServer((req, res) => {
@@ -25,10 +25,12 @@ const server = http.createServer((req, res) => {
   req.on('data', c => body += c);
   req.on('end', () => {
     const j = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (req.headers['x-api-key'] !== KEY) return j(401, { message: 'bad key' });
     const u = new URL(req.url, 'http://x');
+    if (u.pathname === '/hook') { gw.hooks.push(JSON.parse(body)); return j(200, {}); }   // alert webhook (no engine key)
+    if (req.headers['x-api-key'] !== KEY) return j(401, { message: 'bad key' });
     if (u.pathname === '/status') return j(200, { status: gw.status, phone: '919000000000', pushName: 'Test' });
     if (u.pathname === '/typing') return j(200, { ok: true });
+    if (u.pathname === '/receipts') { const ids = JSON.parse(body).ids; return j(200, Object.fromEntries(ids.map(id => [id, gw.acks[id] ?? 1]))); }
     if (u.pathname === '/groups') return j(200, []);
     if (u.pathname === '/history') {
       const chat = u.searchParams.get('chatId');
@@ -84,7 +86,8 @@ before(async () => {
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
   for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists']) db.exec(`DELETE FROM ${t}`);
-  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready' });
+  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [] });
+  setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
   Object.assign(sched.state, { lastSentAt: 0, consecutiveFailures: 0, leader: false, busy: false, stopping: false });
 });
@@ -392,4 +395,55 @@ test('remembered times: a list remembers the day, time and pacing it was last se
   // A message to a different set of groups doesn't overwrite it.
   groups.rememberUsage([G(3).id], { time: '18:00', dow: 4, gapMin: 40, gapMax: 120, repeat: [] });
   assert.equal(groups.lists().find(x => x.id === Number(listId)).usual.time, '10:00');
+});
+
+test('delivery ticks: receipts from WhatsApp are stored per group (✓ sent, ✓✓ delivered)', async () => {
+  addGroups(1, 2);
+  const id = addJob({ groups: [1, 2] });
+  await runUntilIdle();
+  const [a] = sends(id);
+  gw.acks[a.wa_message_id] = 2;
+  await sched.pollReceipts();
+  assert.deepEqual(sends(id).map(x => x.ack), [2, 1]);
+});
+
+test('undo before the first group: a one-off is cancelled and nothing is sent', async () => {
+  addGroups(1);
+  const id = addJob({ groups: [1], runAt: Date.now() + 60e3 });
+  assert.deepEqual(sched.undo(id, 'tester'), { cancelled: true });
+  db.prepare('UPDATE jobs SET start_at=? WHERE id=?').run(Date.now(), id);
+  await runUntilIdle();
+  assert.equal(gw.delivered.length, 0);
+  assert.equal(job(id).status, 'cancelled');
+});
+
+test('undo on a weekly message skips just this time; the repeat carries on', async () => {
+  addGroups(1);
+  const id = addJob({ groups: [1], repeat: [0, 1, 2, 3, 4, 5, 6] });
+  const before = job(id).run_at;
+  const r = sched.undo(id, 'tester');
+  assert.equal(r.skipped, true);
+  assert.equal(job(id).status, 'scheduled');
+  assert.ok(job(id).run_at > before + 6 * 3600e3);
+  await sched.tick();
+  assert.equal(gw.delivered.length, 0);
+});
+
+test('undo is refused once a group has received it', async () => {
+  addGroups(1, 2);
+  const id = addJob({ groups: [1, 2], gap: 400 });
+  const run = sched.tick();
+  while (gw.delivered.length < 1) await new Promise(r => setTimeout(r, 5));
+  assert.throws(() => sched.undo(id, 'tester'), /already started/);
+  await run; await runUntilIdle();
+  assert.equal(gw.delivered.length, 2);
+});
+
+test('when a message finishes cleanly, a short "done" note goes to the alert channel', async () => {
+  addGroups(1, 2);
+  setSetting('alert_webhook', `http://127.0.0.1:${PORT}/hook`);
+  addJob({ groups: [1, 2], message: 'Weekend reminder 🎯' });
+  await runUntilIdle();
+  await new Promise(r => setTimeout(r, 100));
+  assert.ok(gw.hooks.some(h => /Weekend reminder 🎯.*2\/2 groups/.test(h.text)), JSON.stringify(gw.hooks));
 });

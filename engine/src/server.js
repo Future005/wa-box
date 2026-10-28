@@ -66,6 +66,11 @@ function createServer(engine, { apiKey, MessageMediaImpl } = {}) {
       const msgs = await withTimeout(chat.fetchMessages({ limit }), 40000, 'reading messages');
       return msgs.map(m => ({ id: m.id?._serialized, body: m.body || '', fromMe: !!m.fromMe, timestamp: m.timestamp, type: m.type }));
     },
+    'POST /receipts': async b => {
+      const ids = Array.isArray(b.ids) ? b.ids.filter(x => typeof x === 'string' && x.length < 200) : [];
+      if (!ids.length) throw bad(400, 'ids required');
+      return engine.receipts(ids);
+    },
     'POST /typing': async b => {
       const c = engine.ready();
       const chat = await withTimeout(c.getChatById(chatId(b.chatId)), 20000, 'opening chat');

@@ -45,6 +45,7 @@ class Engine {
     this.stopping = false;
     this.strikes = 0;
     this.lastNightly = null;
+    this.acks = new Map();   // messageId -> latest WhatsApp receipt (1 sent, 2 delivered, 3 read)
   }
 
   setStatus(s, why = '') {
@@ -95,6 +96,12 @@ class Engine {
       this.setStatus('ready', `WhatsApp Web ${this.info.waVersion || '?'}`);
     });
     c.on('change_state', s => log('info', `whatsapp state ${s}`));
+    // Delivery receipts for messages we sent. Kept in memory (bounded); WA Box asks for them.
+    c.on('message_ack', (msg, ack) => {
+      if (!msg?.fromMe || !msg.id?._serialized) return;
+      this.acks.set(msg.id._serialized, ack);
+      if (this.acks.size > 5000) this.acks.delete(this.acks.keys().next().value);
+    });
     c.on('disconnected', reason => {
       if (this.client !== c || this.stopping) return;
       this.lastError = `Disconnected: ${reason}`;
@@ -146,6 +153,20 @@ class Engine {
     const proc = c.pupBrowser?.process?.();
     try { await withTimeout(c.destroy(), 20000, 'close'); } catch (e) { log('warn', 'close: ' + e.message); }
     try { if (proc && proc.exitCode === null) proc.kill('SIGKILL'); } catch { /* already gone */ }
+  }
+
+  /** Latest receipt for each id: from events we saw, else asked from WhatsApp Web. */
+  async receipts(ids) {
+    const c = this.ready(); const out = {};
+    for (const id of ids.slice(0, 100)) {
+      if (this.acks.has(id) && this.acks.get(id) >= 2) { out[id] = this.acks.get(id); continue; }
+      try {
+        const m = await withTimeout(c.getMessageById(id), 10000, 'reading receipt');
+        if (m && typeof m.ack === 'number') { out[id] = m.ack; this.acks.set(id, m.ack); }
+        else if (this.acks.has(id)) out[id] = this.acks.get(id);
+      } catch { if (this.acks.has(id)) out[id] = this.acks.get(id); }
+    }
+    return out;
   }
 
   async logout() {

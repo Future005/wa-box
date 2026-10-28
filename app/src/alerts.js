@@ -66,6 +66,14 @@ async function clear(key, message, { waReady = false } = {}) {
   }
 }
 
+/** A friendly heads-up (not an issue): e.g. "15/15 sent". Off if the admin turned it off. */
+async function note(text, { waReady = false } = {}) {
+  if (!getSetting('alert_done', true)) return [];
+  const res = await deliver(text, { waReady });
+  if (res.length) logEvent('info', 'note', `${text.split('\n')[0]} [sent via ${res.join(', ')}]`);
+  return res;
+}
+
 function openIssues() {
   return db.prepare('SELECT key, level, message, last_at FROM alert_log WHERE open=1 ORDER BY last_at DESC').all();
 }
@@ -87,4 +95,4 @@ async function digest({ waReady, summary }) {
   logEvent('info', 'digest', `${summary.replace(/\n/g, ' | ')} [sent via ${res.join(', ') || 'no channel'}]`);
 }
 
-module.exports = { raise, clear, openIssues, test, digest, config };
+module.exports = { raise, clear, note, openIssues, test, digest, config, deliver };

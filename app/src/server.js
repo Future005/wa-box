@@ -174,7 +174,7 @@ const upload = multer({
 });
 
 function serializeJob(j) {
-  const sends = db.prepare('SELECT group_id,group_name,status,error,sent_at,attempts FROM sends WHERE job_id=? AND occurrence=?').all(j.id, j.run_at);
+  const sends = db.prepare('SELECT group_id,group_name,status,error,sent_at,attempts,ack FROM sends WHERE job_id=? AND occurrence=?').all(j.id, j.run_at);
   const { date, time } = epochToIst(j.run_at);
   return {
     id: j.id, title: j.title, message: j.message, hasImage: !!j.media_file, imageUrl: j.media_url || null,
@@ -269,7 +269,7 @@ api.get('/sends', (req, res) => {
   const rows = db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id
     ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT 500`).all();
   res.json({ sends: rows.map(r => ({ id: r.id, jobId: r.job_id, groupId: r.group_id, title: r.title, preview: r.message.slice(0, 80),
-    group: r.group_name, status: r.status, error: r.error, verified: !!r.verified, at: r.sent_at || r.attempt_at || r.occurrence })) });
+    group: r.group_name, status: r.status, error: r.error, verified: !!r.verified, ack: r.ack, at: r.sent_at || r.attempt_at || r.occurrence })) });
 });
 
 // Decide about one group after an unclear or failed send.
@@ -323,7 +323,7 @@ api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
   const r = db.prepare(`INSERT INTO jobs(title,message,media_file,media_mime,media_url,link_preview,groups_json,time_ist,run_at,start_at,gap_min,gap_max,
     repeat_days,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?)`)
     .run(v.title, v.message, media?.name || null, media?.mime || null, v.imageUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt,
-      v.runAt + sched.jitter(), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, req.user.username, now, now);
+      Math.max(v.runAt + sched.jitter(), Date.now() + UNDO_MS), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, req.user.username, now, now);
   savedGroups.rememberUsage(v.chosen.map(g => g.id), { time: v.time, dow: epochToIst(v.runAt).dow, gapMin: v.gapMin, gapMax: v.gapMax, repeat: v.repeatDays });
   audit(req.user.username, 'job_created', `#${r.lastInsertRowid} ${v.chosen.length} groups at ${formatIst(v.runAt)}`);
   res.json({ ok: true, id: r.lastInsertRowid });
@@ -348,6 +348,12 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+api.post('/jobs/:id/undo', wrap(async (req, res) => {
+  const r = sched.undo(Number(req.params.id), req.user.username);
+  audit(req.user.username, 'job_undo', `#${req.params.id}`);
+  res.json({ ok: true, ...r });
+}));
+
 api.post('/jobs/:id/cancel', wrap(async (req, res) => {
   const r = db.prepare("UPDATE jobs SET status='cancelled', note=?, updated_by=?, updated_at=? WHERE id=? AND status IN ('scheduled','running')")
     .run(`Cancelled by ${req.user.username}`, req.user.username, Date.now(), Number(req.params.id));
@@ -356,9 +362,11 @@ api.post('/jobs/:id/cancel', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// "Send now" starts after a 30-second undo window.
+const UNDO_MS = 30 * 1000;
 api.post('/jobs/:id/send-now', wrap(async (req, res) => {
   const r = db.prepare("UPDATE jobs SET start_at=?, updated_by=?, updated_at=? WHERE id=? AND status='scheduled'")
-    .run(Date.now(), req.user.username, Date.now(), Number(req.params.id));
+    .run(Date.now() + UNDO_MS, req.user.username, Date.now(), Number(req.params.id));
   if (!r.changes) throw bad('Only scheduled jobs can be started now');
   // keep run_at so a repeating job keeps its weekly time
   audit(req.user.username, 'job_send_now', `#${req.params.id}`);
@@ -438,6 +446,7 @@ api.put('/settings', requireAdmin, wrap(async (req, res) => {
     setSetting('alert_wa_numbers', [...new Set(nums)].slice(0, 5)); audit(req.user.username, 'alert_channel', `${nums.length} WhatsApp number(s)`);
   }
   if (typeof b.alertDigest === 'boolean') setSetting('alert_digest', b.alertDigest);
+  if (typeof b.alertDone === 'boolean') setSetting('alert_done', b.alertDone);
   for (const [k, key] of [['quietStart', 'quiet_start'], ['quietEnd', 'quiet_end']]) {
     if (b[k] === undefined) continue;
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[k]))) throw bad('Quiet hours need a time like 22:00');
@@ -450,7 +459,7 @@ api.put('/settings', requireAdmin, wrap(async (req, res) => {
 api.get('/system', requireAdmin, (_req, res) => {
   const cfg = alerts.config();
   res.json({ health: sched.health(), issues: alerts.openIssues(),
-    alerts: { webhook: cfg.webhookUrl ? cfg.webhookUrl.replace(/^(https:\/\/[^/]+\/).+$/, '$1…') : '', webhookSet: !!cfg.webhookUrl, waNumbers: cfg.waNumbers, digest: cfg.digest },
+    alerts: { done: getSetting('alert_done', true), webhook: cfg.webhookUrl ? cfg.webhookUrl.replace(/^(https:\/\/[^/]+\/).+$/, '$1…') : '', webhookSet: !!cfg.webhookUrl, waNumbers: cfg.waNumbers, digest: cfg.digest },
     unconfirmed: db.prepare(`SELECT s.job_id, s.group_id, s.group_name, s.status, s.error, s.attempt_at, j.message FROM sends s JOIN jobs j ON j.id=s.job_id
       WHERE s.status IN ('unconfirmed','sending','uncertain') ORDER BY s.attempt_at DESC LIMIT 50`).all(),
     version: process.env.SOURCE_COMMIT || process.env.COOLIFY_SOURCE_COMMIT || 'dev', instance: sched.OWNER });

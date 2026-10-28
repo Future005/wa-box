@@ -386,6 +386,8 @@
               <label class="fld"><span>Hourly limit</span><input name="hourlyCap" type="number" min="1" max="40"><small>Messages in any 60 minutes.</small></label>
               <label class="fld"><span>Duplicate guard (hours)</span><input name="dedupeHours" type="number" min="0" max="168"><small>Block the same text to the same group within this many hours. 0 turns it off.</small></label>
               <label class="fld"><span>Skip if late by (minutes)</span><input name="maxLateMin" type="number" min="5" max="1440"><small>If the server was down, don't send hours late.</small></label>
+              <label class="fld"><span>Quiet hours start</span><input name="quietStart" type="time"><small>Writers get a nudge when scheduling inside quiet hours.</small></label>
+              <label class="fld"><span>Quiet hours end</span><input name="quietEnd" type="time"></label>
             </div>
             <p class="form-error" id="settings-error"></p>
             <div class="btn-row"><button class="btn btn-primary" type="submit">Save settings</button></div>
@@ -395,7 +397,8 @@
             <p class="hint">WA Box tells you if WhatsApp disconnects, sending pauses itself, a send is unclear, or a message is missed. Each problem is announced at most once an hour.</p>
             <label class="fld"><span>Chat webhook link</span><input name="alertWebhook" type="url" placeholder="https://hooks.slack.com/… or Google Chat / Discord webhook" autocomplete="off"><small id="webhook-current">Slack, Google Chat and Discord all give you a link like this.</small></label>
             <label class="fld"><span>WhatsApp numbers to alert</span><input name="alertWaNumbers" placeholder="9198xxxxxxxx, 9199xxxxxxxx" autocomplete="off"><small>With country code. Sent from the connected number, so this can't warn you if WhatsApp itself is down. Use the webhook for that.</small></label>
-            <label class="switch-row"><span><b>Morning check-in</b><small>A short summary every day around 8:30 AM. If it doesn't arrive, something is wrong.</small></span><span class="switch"><input type="checkbox" name="alertDigest"><span class="track"></span></span></label>
+            <label class="switch-row"><span><b>"Done" notes</b><small>A short note when a message has gone to every group, e.g. "Weekend reminder: 15/15 groups".</small></span><span class="switch"><input type="checkbox" name="alertDone"><span class="track"></span></span></label>
+            <label class="switch-row"><span><b>Morning check-in</b><small>A short summary every day around 8:30 AM, with the week ahead on Mondays. If it doesn't arrive, something is wrong.</small></span><span class="switch"><input type="checkbox" name="alertDigest"><span class="track"></span></span></label>
             <p class="form-error" id="alerts-error"></p>
             <div class="btn-row"><button class="btn btn-primary" type="submit">Save alerts</button><button class="btn btn-ghost" type="button" id="alert-test">Send a test alert</button></div>
           </form>

@@ -119,7 +119,7 @@ async function refreshWa() {
 
 // ---------- helpers ----------
 const getJob = id => db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
-const jobStillActive = id => { const j = getJob(id); return j && ['scheduled', 'running'].includes(j.status); };
+const jobStillActive = (id, runAt) => { const j = getJob(id); return j && ['scheduled', 'running'].includes(j.status) && (runAt === undefined || j.run_at === runAt); };
 const getSend = (job, groupId) => db.prepare('SELECT * FROM sends WHERE job_id=? AND occurrence=? AND group_id=?').get(job.id, job.run_at, groupId);
 
 function upsertSend(job, group, fields) {
@@ -134,11 +134,11 @@ function upsertSend(job, group, fields) {
     wa_message_id=excluded.wa_message_id, override=excluded.override, verified=excluded.verified`).run(row);
 }
 
-async function interruptibleSleep(ms, jobId) {
+async function interruptibleSleep(ms, jobId, runAt) {
   const until = Date.now() + ms;
   state.nextSendAt = until;
   while (Date.now() < until) {
-    if (state.stopping || !jobStillActive(jobId) || settings().paused) return false;
+    if (state.stopping || !jobStillActive(jobId, runAt) || settings().paused) return false;
     if (!acquireLease()) return false;
     await sleep(Math.min(FAST ? 10 : 1000, Math.max(0, until - Date.now())));
   }
@@ -195,6 +195,12 @@ function finishOccurrence(job, note = '') {
   job = getJob(job.id);
   const days = JSON.parse(job.repeat_days || '[]');
   const problems = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('failed','missed','unconfirmed','blocked_duplicate','skipped')").get(job.id, job.run_at).n;
+  const sentN = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run')").get(job.id, job.run_at).n;
+  const total = JSON.parse(job.groups_json).length;
+  const practice = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status='dry_run'").get(job.id, job.run_at).n > 0;
+  if (!problems && sentN) {
+    alerts.note(`✅ “${firstLine(job.message)}”: ${sentN}/${total} groups${practice ? ' (practice mode, nothing actually sent)' : ''}. Delivery ticks update in WA Box.`, { waReady: state.wa.status === 'ready' }).catch(() => {});
+  }
   if (problems) {
     alerts.raise(`job_errors:${job.id}:${job.run_at}`, 'warn', `“${firstLine(job.message)}” (${formatIst(job.run_at)}) finished, but ${problems} group${problems === 1 ? '' : 's'} didn't get it. See Sent for details.`, { waReady: state.wa.status === 'ready' }).catch(() => {});
   }
@@ -343,9 +349,9 @@ async function runJob(job) {
     const sinceLast = (Date.now() - state.lastSentAt) / SEC;
     const wantGap = rand(gapMin, gapMax);
     if (state.lastSentAt && sinceLast < wantGap) {
-      if (!await interruptibleSleep((wantGap - sinceLast) * SEC, job.id)) return;
+      if (!await interruptibleSleep((wantGap - sinceLast) * SEC, job.id, job.run_at)) return;
     }
-    if (state.stopping || !acquireLease() || !jobStillActive(job.id) || settings().paused) return;
+    if (state.stopping || !acquireLease() || !jobStillActive(job.id, job.run_at) || settings().paused) return;
     if (!cfg.dryRun && !(await refreshWa())) {
       db.prepare('UPDATE jobs SET note=? WHERE id=?').run('WhatsApp disconnected. Waiting until it reconnects.', job.id);
       return;
@@ -377,13 +383,54 @@ async function maybeDigest(ready) {
   const groups = jobs.reduce((n, j) => n + JSON.parse(j.groups_json).length, 0);
   const fails = db.prepare("SELECT COUNT(*) n FROM sends WHERE status IN ('failed','unconfirmed','missed') AND COALESCE(sent_at, attempt_at, occurrence) > ?").get(start - 24 * 3600 * 1000).n;
   const cfg = settings();
+  const lines = [];
+  if (t.dow === 1) {   // Monday: the week ahead
+    const week = db.prepare("SELECT message, groups_json, run_at FROM jobs WHERE status IN ('scheduled','running') AND run_at < ? ORDER BY run_at").all(start + 7 * 86400000);
+    lines.push('', `This week (${week.length}):`, ...(week.length ? week.map(j => `• ${formatIst(j.run_at)} · ${firstLine(j.message)} · ${JSON.parse(j.groups_json).length} groups`) : ['• Nothing scheduled yet']));
+  }
   const summary = [
     `WhatsApp: ${ready ? 'connected' : 'NOT connected'}`,
     `Mode: ${cfg.paused ? 'paused' : cfg.dryRun ? 'practice (nothing is sent)' : 'live'}`,
     `Today: ${jobs.length} message${jobs.length === 1 ? '' : 's'} to ${groups} group sends`,
     `Problems in the last 24 h: ${fails}`,
+    ...lines,
   ].join('\n');
   await alerts.digest({ waReady: ready, summary });
+}
+
+// ---------- delivery receipts ----------
+let lastReceipts = 0;
+async function pollReceipts() {
+  if (Date.now() - lastReceipts < (FAST ? 0 : 2 * 60 * 1000)) return;
+  lastReceipts = Date.now();
+  const rows = db.prepare(`SELECT id, wa_message_id FROM sends WHERE status='sent' AND wa_message_id IS NOT NULL
+    AND (ack IS NULL OR ack < 2) AND sent_at > ? ORDER BY sent_at DESC LIMIT 50`).all(Date.now() - 48 * 3600 * 1000);
+  if (!rows.length) return;
+  try {
+    const acks = await wa.receipts(rows.map(r => r.wa_message_id));
+    const upd = db.prepare('UPDATE sends SET ack=?, ack_at=? WHERE id=? AND (ack IS NULL OR ack < ?)');
+    for (const r of rows) if (typeof acks[r.wa_message_id] === 'number') upd.run(acks[r.wa_message_id], Date.now(), r.id, acks[r.wa_message_id]);
+  } catch (e) { logEvent('warn', 'receipts', 'Could not read delivery ticks: ' + e.message); }
+}
+
+// ---------- undo / skip ----------
+/** Stop a message before its first group gets it. A weekly message skips just this time. */
+function undo(jobId, by) {
+  const job = getJob(jobId);
+  if (!job || !['scheduled', 'running'].includes(job.status)) throw new Error('This message is not waiting to go out');
+  const started = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ('pending','retry')").get(job.id, job.run_at).n;
+  if (started) throw new Error('It has already started sending. Use Stop instead.');
+  const days = JSON.parse(job.repeat_days || '[]');
+  if (days.length) {
+    const next = nextWeeklyOccurrence(Math.max(job.run_at, Date.now()), job.time_ist, days);
+    db.prepare("UPDATE jobs SET run_at=?, start_at=?, status='scheduled', note=?, updated_by=?, updated_at=? WHERE id=?")
+      .run(next, next + jitter(), `Skipped ${formatIst(job.run_at)} (undo by ${by})`, by, Date.now(), job.id);
+    logEvent('info', 'undo', `${by} skipped this time; next ${formatIst(next)}`, { jobId });
+    return { skipped: true, next };
+  }
+  db.prepare("UPDATE jobs SET status='cancelled', note=?, updated_by=?, updated_at=? WHERE id=?").run(`Undone by ${by} before sending`, by, Date.now(), job.id);
+  logEvent('info', 'undo', `${by} undid it before any group got it`, { jobId });
+  return { cancelled: true };
 }
 
 // ---------- tick ----------
@@ -395,6 +442,7 @@ async function tick() {
     const ready = await refreshWa();
     if (!acquireLease()) return;
     if (ready) await recoverInFlight();
+    if (ready) await pollReceipts();
     await maybeDigest(ready).catch(e => logEvent('warn', 'digest', e.message));
     const cfg = settings();
     const now = Date.now();
@@ -508,4 +556,4 @@ function health() {
   };
 }
 
-module.exports = { startLoop, stop, tick, purgeMedia, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };
+module.exports = { startLoop, stop, tick, purgeMedia, undo, pollReceipts, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };

@@ -82,9 +82,11 @@
     if (!res.ok) throw new Error(data.error || `Something went wrong (${res.status})`);
     return data;
   }
-  function toast(msg, bad = false) {
-    const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : '');
-    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3800);
+  function toast(msg, bad = false, action = null) {
+    const t = $('#toast'); t.className = 'toast' + (bad ? ' bad' : '');
+    t.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button" class="toast-act">${esc(action.label)}</button>` : ''}`;
+    if (action) t.querySelector('.toast-act').onclick = () => { t.classList.add('hidden'); action.run(); };
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), action ? 9000 : 3800);
   }
   function dialog({ title, html = '', ok = 'OK', cancel = 'Cancel', danger = false, onOpen }) {
     return new Promise(resolve => {
@@ -117,6 +119,7 @@
       }
     }
     S.view = view; S.params = params;
+    if (['today', 'scheduled'].includes(view)) await loadJobs();   // always fresh when you open a page
     $$('.view').forEach(v => v.classList.toggle('on', v.dataset.view === view));
     $$('.nav a').forEach(a => a.classList.toggle('on', a.dataset.view === view || (view === 'compose' && false)));
     closeMenu(); closeDrawer(); clearInterval(S.qrTimer);
@@ -144,13 +147,24 @@
     await Promise.all([refreshStatus(), loadGroups(), loadJobs(), loadLists()]);
     route();
     clearInterval(S.tick);
-    S.tick = setInterval(async () => {
+    clearTimeout(S.tick);
+    // Refresh every 15 s, or every 4 s while something is sending or about to start.
+    const loop = async () => {
       await refreshStatus(); await loadJobs();
-      if (document.activeElement && $('#main').contains(document.activeElement) && S.view !== 'today') return;
-      if (S.view === 'today') renderToday();
-      if (S.view === 'scheduled') renderScheduled();
+      const busy = S.upcoming.some(j => j.status === 'running' || j.startAt - Date.now() < 3 * 60000);
+      if (!(document.activeElement && $('#main').contains(document.activeElement) && !['today', 'scheduled'].includes(S.view))) {
+        if (S.view === 'today') renderToday();
+        if (S.view === 'scheduled') renderScheduled();
+      }
       if (S.drawerJob) { const j = findJob(S.drawerJob); if (j) fillDrawer(j); }
-    }, 15000);
+      S.tick = setTimeout(loop, busy ? 4000 : 15000);
+    };
+    S.tick = setTimeout(loop, 4000);
+    clearInterval(S.clock);
+    S.clock = setInterval(() => $$('[data-countdown]').forEach(el => {
+      const left = Math.max(0, Math.round((Number(el.dataset.countdown) - Date.now()) / 1000));
+      el.textContent = left > 0 ? `Starts in ${Math.floor(left / 60)}:${pad(left % 60)}` : 'Starting…';
+    }), 1000);
   }
   $('#login-form').addEventListener('submit', async e => {
     e.preventDefault();
@@ -258,9 +272,21 @@
     $('#again-strip').innerHTML = list.length ? `<section class="again"><h2>Send these again?</h2>${list.map(j => `<div class="again-row"><span><b>${esc(jobName(j))}</b><small>${plural(j.groups.length, 'group')} · last sent ${esc(shortDate(j.runAt))}, ${ist(j.runAt).time}</small></span><a class="btn btn-ghost btn-sm" href="#compose?again=${j.id}">Repeat ${esc(shortDate(nextWeekOf(j)))}</a></div>`).join('')}</section>` : '';
   }
   async function loadSendsQuiet() { try { S.sends = (await api('sends')).sends; } catch { /* keep */ } }
-  ['#today-attention', '#today-recent', '#today-agenda', '#sched-list'].forEach(sel => $(sel).addEventListener('click', e => {
-    const r = e.target.closest('[data-job]'); if (r) openDrawer(Number(r.dataset.job));
-  }));
+  async function undoJob(id) {
+    try {
+      const r = await api(`jobs/${id}/undo`, { method: 'POST' });
+      toast(r.skipped ? `Skipped. Next time: ${whenLabel(r.next)}` : 'Undone. Nothing was sent.');
+      await loadJobs(); if (S.view === 'today') renderToday(); if (S.view === 'scheduled') renderScheduled();
+      if (S.drawerJob === id) { const j = findJob(id); j ? fillDrawer(j) : closeDrawer(); }
+    } catch (err) { toast(err.message, true); }
+  }
+  ['#today-attention', '#today-recent', '#today-agenda', '#sched-list'].forEach(sel => {
+    $(sel).addEventListener('click', e => {
+      const u = e.target.closest('[data-undo]'); if (u) { e.stopPropagation(); undoJob(Number(u.dataset.undo)); return; }
+      const r = e.target.closest('[data-job]'); if (r) openDrawer(Number(r.dataset.job));
+    });
+    $(sel).addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.job-row')) { e.preventDefault(); openDrawer(Number(e.target.dataset.job)); } });
+  });
 
   function agendaHtml(jobs, dateOf = j => j.startAt) {
     const byDay = new Map();
@@ -270,16 +296,31 @@
       return `<div class="day"><h3>${rel ? `<span class="rel">${rel}</span>` : ''}<span>${DOW_LONG[x.dow]}, ${x.d} ${MON[x.m]}</span></h3><div class="day-rows">${js.map(jobRowHtml).join('')}</div></div>`;
     }).join('');
   }
+  const isStartingSoon = j => j.status === 'scheduled' && j.startAt - Date.now() < 3 * 60000 && !j.sends.some(x => !['pending', 'retry'].includes(x.status));
+  function liveLine(j) {
+    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed', 'blocked_duplicate', 'unconfirmed'].includes(s.status)).length;
+    const r = S.status?.running;
+    const next = r && r.id === j.id && r.nextSendAt ? ` · next ~${ist(r.nextSendAt).time}` : r && r.id === j.id && r.group ? ` · sending to ${r.group}` : '';
+    return `${done} of ${j.groups.length} sent${next}`;
+  }
   function jobRowHtml(j) {
-    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed'].includes(s.status)).length;
+    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed', 'blocked_duplicate', 'unconfirmed'].includes(s.status)).length;
     const pct = j.groups.length ? Math.round(done / j.groups.length * 100) : 0;
-    return `<button class="job-row" type="button" data-job="${j.id}">
+    const soon = isStartingSoon(j);
+    return `<div class="job-row" role="button" tabindex="0" data-job="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span>
       <span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
         <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(j.createdBy.split('@')[0])}</span></span>
-        ${j.status === 'running' ? `<span class="progress"><i data-w="${pct}"></i></span>` : ''}
+        ${j.status === 'running' ? `<span class="live">${esc(liveLine(j))}</span><span class="progress"><i data-w="${pct}"></i></span>` : ''}
         ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
-      </span>${pill(j.status)}</button>`;
+      </span>${soon ? `<span class="soon"><span class="countdown" data-countdown="${j.startAt}"></span><button type="button" class="btn btn-ghost btn-sm" data-undo="${j.id}">${j.repeatDays.length ? 'Skip this time' : 'Undo'}</button></span>` : pill(j.status)}</div>`;
+  }
+  // WhatsApp-style ticks: ✓ sent, ✓✓ delivered, blue ✓✓ read
+  function tickHtml(s) {
+    if (!s || s.status !== 'sent') return '';
+    if (s.ack >= 3) return '<span class="ticks r" title="Read">✓✓</span>';
+    if (s.ack >= 2) return '<span class="ticks d" title="Delivered">✓✓</span>';
+    return '<span class="ticks" title="Sent, not delivered yet">✓</span>';
   }
   // progress widths without inline styles in markup
   new MutationObserver(() => $$('i[data-w]').forEach(i => { i.style.width = i.dataset.w + '%'; i.removeAttribute('data-w'); }))
@@ -300,11 +341,13 @@
     $('#dr-sub').textContent = `${whenLabel(j.runAt)}${j.repeatDays.length ? ` · repeats ${repeatLabel(j.repeatDays)}` : ''}`;
     const byId = new Map(j.sends.map(s => [s.group_id, s]));
     const sent = j.sends.filter(s => ['sent', 'dry_run'].includes(s.status)).length;
+    const delivered = j.sends.filter(s => s.status === 'sent' && s.ack >= 2).length;
     $('#dr-body').innerHTML = `
       ${j.note ? `<div class="alert warn">${ICON.warn}<span>${esc(j.note)}</span></div>` : ''}
       <dl class="facts">
         <dt>Status</dt><dd>${pill(j.status)}</dd>
-        <dt>Groups</dt><dd>${plural(j.groups.length, 'group')}${j.sends.length ? `, ${sent} delivered` : ''}</dd>
+        <dt>Groups</dt><dd>${plural(j.groups.length, 'group')}${j.sends.length ? `, ${sent} sent${delivered ? ` · <span class="ticks d">✓✓</span> delivered in ${delivered}/${j.groups.length}` : ''}` : ''}</dd>
+        ${j.status === 'running' ? `<dt>Progress</dt><dd>${esc(liveLine(j))}</dd>` : ''}
         <dt>Pacing</dt><dd>${esc(pacingLabel(j))}</dd>
         <dt>Created by</dt><dd>${esc(j.createdBy)}</dd>
         ${j.updatedBy !== j.createdBy ? `<dt>Last edited by</dt><dd>${esc(j.updatedBy)}</dd>` : ''}
@@ -313,9 +356,10 @@
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
         const canDecide = s && ['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(s.status);
         const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
-        return `<div><span class="gn">${esc(g.name)}</span>${s ? pill(s.status) : '<span class="pill scheduled">Waiting</span>'}${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
+        return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${s ? pill(s.status) : '<span class="pill scheduled">Waiting</span>'}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
     const acts = [];
-    if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
+    if (isStartingSoon(j)) acts.push(['undo', j.repeatDays.length ? 'Skip this time' : 'Undo', 'btn-primary'], ['edit', 'Edit', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
+    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['cancel', 'Stop sending', 'btn-danger-ghost']);
     else acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
@@ -339,11 +383,12 @@
     const b = e.target.closest('[data-act]'); if (!b) return;
     const j = findJob(S.drawerJob); if (!j) return;
     try {
+      if (b.dataset.act === 'undo') return undoJob(j.id);
       if (b.dataset.act === 'edit') location.hash = `compose?edit=${j.id}`;
       if (b.dataset.act === 'dup') location.hash = `compose?dup=${j.id}`;
       if (b.dataset.act === 'again') location.hash = `compose?again=${j.id}`;
-      if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts within a minute and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
-        await api(`jobs/${j.id}/send-now`, { method: 'POST' }); toast('Sending starts within a minute'); await loadJobs(); fillDrawer(findJob(j.id));
+      if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts in 30 seconds (you can still undo) and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
+        await api(`jobs/${j.id}/send-now`, { method: 'POST' }); toast('Starts in 30 seconds', false, { label: 'Undo', run: () => undoJob(j.id) }); await loadJobs(); fillDrawer(findJob(j.id));
       }
       if (b.dataset.act === 'cancel') {
         const running = j.status === 'running';
@@ -377,7 +422,7 @@
       (!q || s.group.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q)));
     $('#sent-table tbody').innerHTML = rows.length ? rows.map(s => `<tr data-job="${s.jobId}">
       <td class="when">${esc(whenLabel(s.at))}</td><td>${esc(s.group)}</td><td class="msg">${esc(firstLine(s.preview))}</td>
-      <td>${pill(s.status)}${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
+      <td><span class="gs">${tickHtml(s)}${pill(s.status)}</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
       : `<tr class="empty-row"><td colspan="4">${S.sends.length ? 'Nothing matches.' : 'Nothing has been sent yet.'}</td></tr>`;
   }
   $('#sent-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.sentFilter = b.dataset.filter; renderSent(); } });
@@ -847,12 +892,13 @@
     if (c.removeImage) fd.set('removeImage', '1');
     const btn = $('#job-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Saving…';
     try {
+      let created = null;
       if (c.mode === 'edit') await api('jobs/' + c.id, { method: 'PUT', form: fd });
-      else await api('jobs', { method: 'POST', form: fd });
+      else created = await api('jobs', { method: 'POST', form: fd });
       store.set('wabox.lastTime', c.time);
       if (c.mode === 'new') store.del(DRAFT_KEY);
       c.dirty = false;
-      toast(c.mode === 'edit' ? 'Changes saved' : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`);
+      toast(c.mode === 'edit' ? 'Changes saved' : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`, false, created ? { label: 'Undo', run: () => undoJob(created.id) } : null);
       await loadJobs(); location.hash = 'scheduled';
     } catch (err) { $('#job-error').textContent = err.message; btn.disabled = false; btn.textContent = label; }
   });
@@ -952,7 +998,8 @@
       const sys = await api('system'); const af = $('#alerts-form');
       af.alertWebhook.value = ''; af.alertWebhook.placeholder = sys.alerts.webhookSet ? 'A link is saved. Paste a new one to replace it.' : 'https://hooks.slack.com/… or Google Chat / Discord webhook';
       $('#webhook-current').textContent = sys.alerts.webhookSet ? `Saved: ${sys.alerts.webhook}` : 'Slack, Google Chat and Discord all give you a link like this.';
-      af.alertWaNumbers.value = sys.alerts.waNumbers.join(', '); af.alertDigest.checked = sys.alerts.digest;
+      af.alertWaNumbers.value = sys.alerts.waNumbers.join(', '); af.alertDigest.checked = sys.alerts.digest; af.alertDone.checked = sys.alerts.done;
+      const sf = $('#settings-form'); sf.quietStart.value = S.status.quietStart; sf.quietEnd.value = S.status.quietEnd;
     } catch { /* ignore */ }
     try {
       const { audit } = await api('audit');
@@ -968,14 +1015,14 @@
     e.preventDefault(); const f = e.target; $('#settings-error').textContent = '';
     if (!f.dryRun.checked && S.status.dryRun && !await dialog({ title: 'Go live?', html: '<p>Scheduled messages will really be sent to your WhatsApp groups from now on.</p>', ok: 'Go live' })) return;
     try {
-      await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value), hourlyCap: Number(f.hourlyCap.value), dedupeHours: Number(f.dedupeHours.value) } });
+      await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value), hourlyCap: Number(f.hourlyCap.value), dedupeHours: Number(f.dedupeHours.value), quietStart: f.quietStart.value, quietEnd: f.quietEnd.value } });
       toast('Settings saved'); renderSettings();
     } catch (err) { $('#settings-error').textContent = err.message; }
   });
 
   $('#alerts-form').addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target; $('#alerts-error').textContent = '';
-    const body = { alertWaNumbers: f.alertWaNumbers.value, alertDigest: f.alertDigest.checked };
+    const body = { alertWaNumbers: f.alertWaNumbers.value, alertDigest: f.alertDigest.checked, alertDone: f.alertDone.checked };
     if (f.alertWebhook.value.trim()) body.alertWebhook = f.alertWebhook.value.trim();
     try { await api('settings', { method: 'PUT', body }); toast('Alerts saved'); renderSettings(); }
     catch (err) { $('#alerts-error').textContent = err.message; }
