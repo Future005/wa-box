@@ -131,6 +131,22 @@ api.post('/groups/sync', wrap(async (req, res) => {
   if (err) throw bad(err);
   res.json({ ok: true, sync: savedGroups.status() });
 }));
+api.get('/lists', (_req, res) => res.json({ lists: savedGroups.lists() }));
+api.post('/lists', wrap(async (req, res) => {
+  const id = savedGroups.saveList(req.body || {}, req.user.username);
+  audit(req.user.username, 'list_saved', String(req.body?.name || ''));
+  res.json({ ok: true, id });
+}));
+api.put('/lists/:id', wrap(async (req, res) => {
+  savedGroups.saveList({ ...(req.body || {}), id: req.params.id }, req.user.username);
+  audit(req.user.username, 'list_saved', String(req.body?.name || ''));
+  res.json({ ok: true });
+}));
+api.delete('/lists/:id', wrap(async (req, res) => {
+  savedGroups.deleteList(req.params.id);
+  audit(req.user.username, 'list_deleted', `#${req.params.id}`);
+  res.json({ ok: true });
+}));
 api.put('/groups/keywords', requireAdmin, wrap(async (req, res) => {
   const raw = req.body?.keywords;
   const list = Array.isArray(raw) ? raw : String(raw || '').split(',');

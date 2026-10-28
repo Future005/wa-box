@@ -85,4 +85,39 @@ function status() {
   return { ...sync, keywords: keywords(), saved: list().length };
 }
 
-module.exports = { list, get, count, startSync, status, keywords, setKeywords, matches };
+// ---------- saved group lists ("Weekend cohorts", "Thu-Fri batch") ----------
+db.exec(`
+CREATE TABLE IF NOT EXISTS group_lists (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  group_ids TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`);
+
+function lists() {
+  return db.prepare('SELECT * FROM group_lists ORDER BY name COLLATE NOCASE').all().map(l => {
+    const ids = JSON.parse(l.group_ids);
+    const groups = ids.map(id => get(id) || { id, name: null });
+    return { id: l.id, name: l.name, createdBy: l.created_by, updatedAt: l.updated_at,
+      groups: groups.filter(g => g.name), missing: groups.filter(g => !g.name).length };
+  });
+}
+function saveList({ id, name, groupIds }, by) {
+  name = String(name || '').trim().slice(0, 60);
+  if (!name) throw new Error('Give the list a name');
+  const ids = [...new Set((groupIds || []).map(String))].filter(gid => get(gid));
+  if (!ids.length) throw new Error('Pick at least one group for the list');
+  if (ids.length > 50) throw new Error('A list can have up to 50 groups');
+  const now = Date.now();
+  if (id) {
+    const r = db.prepare('UPDATE group_lists SET name=?, group_ids=?, updated_at=? WHERE id=?').run(name, JSON.stringify(ids), now, Number(id));
+    if (!r.changes) throw new Error('List not found');
+    return Number(id);
+  }
+  return db.prepare('INSERT INTO group_lists(name,group_ids,created_by,updated_at) VALUES(?,?,?,?)').run(name, JSON.stringify(ids), by, now).lastInsertRowid;
+}
+function deleteList(id) { db.prepare('DELETE FROM group_lists WHERE id=?').run(Number(id)); }
+
+module.exports = { list, get, count, startSync, status, keywords, setKeywords, matches, lists, saveList, deleteList };

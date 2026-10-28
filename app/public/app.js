@@ -1,401 +1,758 @@
 'use strict';
 (() => {
+  // ============ helpers ============
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const IST = 330 * 60000;
-  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const IST = 330 * 60000, DAY = 86400000;
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MON_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const pad = n => String(n).padStart(2, '0');
+  const ist = ms => { const d = new Date(ms + IST); return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), dow: d.getUTCDay(),
+    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`, time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; };
+  const istEpoch = (date, time) => { const [y, m, d] = date.split('-').map(Number); const [h, mi] = time.split(':').map(Number); return Date.UTC(y, m - 1, d, h, mi) - IST; };
+  const todayKey = () => ist(Date.now()).date;
+  const shortDate = ms => { const x = ist(ms); return `${DOW[x.dow]} ${x.d} ${MON[x.m]}`; };
+  const relDay = ms => { const k = ist(ms).date; if (k === todayKey()) return 'Today'; if (k === ist(Date.now() + DAY).date) return 'Tomorrow'; if (k === ist(Date.now() - DAY).date) return 'Yesterday'; return null; };
+  const whenLabel = ms => `${relDay(ms) || shortDate(ms)}, ${ist(ms).time}`;
+  const plural = (n, w, p) => `${n} ${n === 1 ? w : (p || w + 's')}`;
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  const dur = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+  const firstLine = t => (String(t || '').split('\n').find(l => l.trim()) || '').replace(/[*_~`]/g, '').trim();
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const jobName = j => j.title || firstLine(j.message) || `Message #${j.id}`;
+  const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+    del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } } };
+  const ICON = {
+    warn: '<svg viewBox="0 0 24 24"><path d="M12 4 3 20h18z"/><path d="M12 10v4M12 17h.01"/></svg>',
+    ok: '<svg viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></svg>',
+    users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><path d="M3.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5"/></svg>',
+    repeat: '<svg viewBox="0 0 24 24"><path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/></svg>',
+    img: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>',
+    user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>',
+  };
+  const STATUS = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done, with errors', cancelled: 'Cancelled',
+    sent: 'Sent', dry_run: 'Practice', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Waiting' };
+  const pill = s => `<span class="pill ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
 
-  const state = { me: null, status: null, groups: [], picked: new Map(), editingId: null, tab: 'schedule', qrTimer: null };
+  // WhatsApp-style formatting for the preview
+  function waFormat(text) {
+    let s = esc(text);
+    s = s.replace(/```([\s\S]+?)```/g, '<code>$1</code>');
+    const rule = (ch, tag) => { const c = ch.replace(/[*~]/g, '\\$&'); return [new RegExp(`(^|[\\s(\\[])${c}(?!\\s)([^${c}\\n]*?[^\\s${c}])${c}(?=$|[\\s).,!?:;\\]])`, 'gm'), `$1<${tag}>$2</${tag}>`]; };
+    for (const [re, rep] of [rule('*', 'b'), rule('_', 'i'), rule('~', 's')]) s = s.replace(re, rep);
+    return s;
+  }
 
-  // ---------- helpers ----------
+  // ============ state + API ============
+  const S = { me: null, status: null, groups: [], sync: null, lists: [], templates: [], upcoming: [], past: [], sends: [],
+    view: null, params: {}, compose: null, schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
+
   async function api(path, opts = {}) {
     const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'wabox' }, credentials: 'same-origin' };
     if (opts.form) init.body = opts.form;
     else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers['Content-Type'] = 'application/json'; }
-    const res = await fetch('api/' + path, init);
+    let res;
+    try { res = await fetch('api/' + path, init); }
+    catch { throw new Error("Can't reach WA Box. Check your internet connection."); }
     let data = {};
-    try { data = await res.json(); } catch { /* empty */ }
-    if (res.status === 401 && path !== 'login') { showView('login'); throw new Error(data.error || 'Please log in'); }
-    if (res.status === 403 && data.mustChange) { showView('password'); throw new Error(data.error); }
-    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    try { data = await res.json(); } catch { /* empty body */ }
+    if (res.status === 401 && path !== 'login') {
+      if (S.me) { S.me = null; $('#login-error').textContent = 'Your session ended. Sign in again.'; }
+      showScreen('login'); throw new Error(data.error || 'Please sign in');
+    }
+    if (res.status === 403 && data.mustChange) { showScreen('password'); throw new Error(data.error); }
+    if (!res.ok) throw new Error(data.error || `Something went wrong (${res.status})`);
     return data;
   }
   function toast(msg, bad = false) {
-    const t = $('#toast');
-    t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : '');
-    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3500);
+    const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : '');
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3800);
   }
-  const ist = ms => { const d = new Date(ms + IST); const p = n => String(n).padStart(2, '0');
-    return { date: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`, time: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`, dow: d.getUTCDay() }; };
-  const fmt = ms => { if (!ms) return ''; const x = ist(ms); return `${DAY_NAMES[x.dow]} ${x.date.slice(8)}/${x.date.slice(5, 7)} ${x.time}`; };
-  const fmtTime = ms => ist(ms).time;
-  const istEpoch = (date, time) => { const [y, m, d] = date.split('-').map(Number); const [h, mi] = time.split(':').map(Number); return Date.UTC(y, m - 1, d, h, mi) - IST; };
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const STATUS_LABEL = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done with errors', cancelled: 'Cancelled',
-    sent: 'Sent', dry_run: 'Dry run', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Pending' };
-
-  function confirmDialog(title, html, okLabel = 'OK', danger = false) {
+  function dialog({ title, html = '', ok = 'OK', cancel = 'Cancel', danger = false, onOpen }) {
     return new Promise(resolve => {
       const d = $('#dialog');
       $('#dialog-title').textContent = title;
-      $('#dialog-content').innerHTML = html;
-      $('#dialog-actions').innerHTML = `<button class="btn ghost" value="no">Back</button><button class="btn ${danger ? 'danger' : 'primary'}" value="yes">${esc(okLabel)}</button>`;
+      $('#dialog-content').innerHTML = html; $('#dialog-content').onclick = null;
+      $('#dialog-actions').innerHTML = (cancel ? `<button class="btn btn-ghost" value="no">${esc(cancel)}</button>` : '') +
+        (ok ? `<button class="btn ${danger ? 'btn-danger-ghost' : 'btn-primary'}" value="yes">${esc(ok)}</button>` : '');
       d.onclose = () => resolve(d.returnValue === 'yes');
       d.returnValue = ''; d.showModal();
+      onOpen && onOpen(d);
     });
   }
+  const isAdmin = () => S.me?.role === 'admin';
 
-  // ---------- views ----------
-  function showView(v) {
-    for (const id of ['login', 'password', 'app']) $('#view-' + id).classList.toggle('hidden', id !== v);
+  // ============ screens & routing ============
+  function showScreen(name) { for (const id of ['login', 'password', 'app']) $('#view-' + id).classList.toggle('hidden', id !== name); }
+  const ADMIN_VIEWS = new Set(['whatsapp', 'team', 'settings']);
+  function parseHash() {
+    const [v, q] = location.hash.replace(/^#/, '').split('?');
+    return { view: v || 'today', params: Object.fromEntries(new URLSearchParams(q || '')) };
   }
-  function showTab(tab) {
-    state.tab = tab;
-    $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    $$('.tab').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + tab));
-    clearInterval(state.qrTimer);
-    ({ upcoming: loadUpcoming, history: loadHistory, templates: loadTemplates, whatsapp: loadWhatsapp, team: loadUsers, settings: loadSettings }[tab] || (() => {}))();
+  async function route() {
+    if (!S.me) return;
+    let { view, params } = parseHash();
+    if (!$(`.view[data-view="${view}"]`) || (ADMIN_VIEWS.has(view) && !isAdmin())) view = 'today';
+    if (S.view === 'compose' && view !== 'compose' && S.compose?.dirty && S.compose.mode !== 'new') {
+      if (!await dialog({ title: 'Leave without saving?', html: '<p>Your changes to this message will be lost.</p>', ok: 'Leave', cancel: 'Keep editing', danger: true })) {
+        history.replaceState(null, '', '#' + 'compose' + (S.composeQuery || '')); return;
+      }
+    }
+    S.view = view; S.params = params;
+    $$('.view').forEach(v => v.classList.toggle('on', v.dataset.view === view));
+    $$('.nav a').forEach(a => a.classList.toggle('on', a.dataset.view === view || (view === 'compose' && false)));
+    closeMenu(); closeDrawer(); clearInterval(S.qrTimer);
+    window.scrollTo(0, 0);
+    const render = { today: renderToday, compose: openCompose, scheduled: renderScheduled, sent: renderSent, templates: renderTemplates,
+      lists: renderLists, whatsapp: renderWhatsapp, team: renderTeam, settings: renderSettings }[view];
+    render && render();
   }
+  window.addEventListener('hashchange', route);
 
+  function closeMenu() { $('#rail').classList.remove('open'); $('#scrim').classList.remove('open'); }
+  $('#menu-open').addEventListener('click', () => { $('#rail').classList.add('open'); $('#scrim').classList.add('open'); });
+  $('#scrim').addEventListener('click', closeMenu);
+
+  // ============ boot / auth ============
   async function boot() {
-    try {
-      state.me = await api('me');
-    } catch { showView('login'); return; }
-    if (state.me.mustChange) { showView('password'); return; }
-    showView('app');
-    $('#me').textContent = `${state.me.username} · ${state.me.role}`;
-    $$('.admin-only').forEach(el => el.classList.toggle('hidden', state.me.role !== 'admin'));
-    resetForm();
-    await refreshStatus();
-    loadGroups();
-    setInterval(refreshStatus, 10000);
+    try { S.me = await api('me'); } catch { showScreen('login'); return; }
+    if (S.me.mustChange) { showScreen('password'); return; }
+    showScreen('app');
+    const name = S.me.username.split('@')[0];
+    $('#me-name').textContent = S.me.username;
+    $('#me-role').textContent = S.me.role;
+    $('#me-avatar').textContent = name.slice(0, 1).toUpperCase();
+    $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
+    await Promise.all([refreshStatus(), loadGroups(), loadJobs(), loadLists()]);
+    route();
+    clearInterval(S.tick);
+    S.tick = setInterval(async () => {
+      await refreshStatus(); await loadJobs();
+      if (document.activeElement && $('#main').contains(document.activeElement) && S.view !== 'today') return;
+      if (S.view === 'today') renderToday();
+      if (S.view === 'scheduled') renderScheduled();
+      if (S.drawerJob) { const j = findJob(S.drawerJob); if (j) fillDrawer(j); }
+    }, 15000);
   }
-
-  // ---------- status ----------
-  async function refreshStatus() {
-    try { state.status = await api('status'); } catch { return; }
-    const s = state.status;
-    const pill = $('#wa-pill');
-    const map = { ready: ['ok', 'WhatsApp connected'], qr_ready: ['warn', 'Scan QR to connect'], authenticating: ['warn', 'Connecting…'],
-      initializing: ['warn', 'Starting…'], created: ['warn', 'Not connected'], disconnected: ['bad', 'Disconnected'],
-      failed: ['bad', 'Connection failed'], action_required: ['bad', 'Action needed'], unreachable: ['bad', 'Gateway offline'] };
-    const [cls, label] = map[s.wa.status] || ['warn', s.wa.status];
-    pill.className = 'pill ' + cls;
-    pill.textContent = label + (s.wa.status === 'ready' && s.wa.name ? ` · ${s.wa.name}` : '');
-
-    const b = [];
-    if (s.dryRun) b.push(['warn', 'Dry run is ON — jobs run on schedule but nothing is actually sent to WhatsApp.' + (state.me.role === 'admin' ? ' Turn it off in Settings when you\'re ready.' : '')]);
-    if (s.paused) b.push(['warn', 'Sending is paused by an admin. Scheduled jobs will wait.']);
-    if (s.wa.status !== 'ready') b.push(['bad', 'WhatsApp is not connected, so nothing can be sent right now.' + (state.me.role === 'admin' ? ' Open the WhatsApp tab to connect.' : ' Ask an admin to reconnect.')]);
-    if (s.running) b.push(['info', `Sending “${s.running.title || 'job #' + s.running.id}” now` + (s.running.group ? ` → ${s.running.group}` : '') +
-      (s.running.nextSendAt ? ` · next group at ${fmtTime(s.running.nextSendAt)}` : '')]);
-    b.push(['ok', `${s.sentToday}/${s.dailyCap} messages sent today`]);
-    $('#banners').innerHTML = b.map(([c, t]) => `<div class="banner ${c}">${esc(t)}</div>`).join('');
-    if (state.tab === 'upcoming') loadUpcoming(true);
-  }
-  $('#wa-pill').addEventListener('click', () => { if (state.me?.role === 'admin') showTab('whatsapp'); });
-
-  // ---------- auth ----------
   $('#login-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const f = new FormData(e.target);
-    $('#login-error').textContent = '';
-    try {
-      await api('login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } });
-      e.target.reset(); boot();
-    } catch (err) { $('#login-error').textContent = err.message; }
+    const f = new FormData(e.target); $('#login-error').textContent = '';
+    const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
+    try { await api('login', { method: 'POST', body: { username: f.get('username').trim(), password: f.get('password') } }); e.target.reset(); boot(); }
+    catch (err) { $('#login-error').textContent = err.message; }
+    finally { btn.disabled = false; }
   });
   $('#password-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const f = new FormData(e.target);
-    $('#password-error').textContent = '';
-    if (f.get('next') !== f.get('again')) { $('#password-error').textContent = 'New passwords do not match'; return; }
-    try {
-      await api('password', { method: 'POST', body: { current: f.get('current'), next: f.get('next') } });
-      e.target.reset(); toast('Password saved'); boot();
-    } catch (err) { $('#password-error').textContent = err.message; }
+    const f = new FormData(e.target); $('#password-error').textContent = '';
+    if (f.get('next') !== f.get('again')) { $('#password-error').textContent = "The new passwords don't match."; return; }
+    try { await api('password', { method: 'POST', body: { current: f.get('current'), next: f.get('next') } }); e.target.reset(); toast('Password saved'); boot(); }
+    catch (err) { $('#password-error').textContent = err.message; }
   });
-  $('#logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); } catch { } location.reload(); });
-  $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
+  $('#logout').addEventListener('click', async () => {
+    if (S.compose?.dirty && S.compose.mode !== 'new' && !await dialog({ title: 'Sign out?', html: '<p>Unsaved changes to this message will be lost.</p>', ok: 'Sign out', danger: true })) return;
+    try { await api('logout', { method: 'POST' }); } catch { /* ignore */ }
+    location.hash = ''; location.reload();
+  });
 
-  // ---------- groups picker ----------
-  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
-  function syncNote(s) {
-    const kw = s.keywords.length ? `matching “${s.keywords.join('”, “')}”` : '(all groups)';
-    if (s.running) return `Syncing from WhatsApp… this can take a minute or two on a big account. You can keep working.`;
-    if (s.error) return `Last sync failed: ${s.error}`;
-    if (!s.finishedAt) return `Not synced yet. Press “Sync from WhatsApp” once WhatsApp is connected.`;
-    return `${s.saved} groups ${kw} · synced ${ago(s.finishedAt)}`;
+  // ============ data ============
+  async function refreshStatus() {
+    try { S.status = await api('status'); } catch { return; }
+    const s = S.status, wa = s.wa.status;
+    const conn = { ready: ['ok', 'WhatsApp connected'], qr_ready: ['warn', 'Waiting for QR scan'], authenticating: ['warn', 'Connecting…'],
+      initializing: ['warn', 'Starting WhatsApp…'], created: ['warn', 'Not connected'], disconnected: ['bad', 'Disconnected'],
+      failed: ['bad', 'Connection failed'], action_required: ['bad', 'Needs attention'], unreachable: ['bad', 'Gateway offline'], unknown: ['warn', 'Checking…'] }[wa] || ['warn', wa];
+    $('#conn-dot').className = 'dot ' + conn[0];
+    $('#conn-title').textContent = conn[1];
+    $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, s.wa.phone ? '+' + s.wa.phone : ''].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
+    $('#conn').setAttribute('href', isAdmin() ? '#whatsapp' : '#today');
+
+    const a = [];
+    if (wa !== 'ready' && wa !== 'unknown') a.push(['bad', "WhatsApp isn't connected. Scheduled messages will wait until it is.", isAdmin() ? ['Connect', '#whatsapp'] : null]);
+    if (s.paused) a.push(['warn', 'Sending is paused. Scheduled messages are waiting.', isAdmin() ? ['Resume', 'resume'] : null]);
+    if (s.dryRun) a.push(['warn', "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
+    $('#alerts').innerHTML = a.map(([c, t, act], i) => `<div class="alert ${c}">${ICON.warn}<span>${esc(t)}</span><span class="spacer"></span>${act ? (act[1].startsWith('#') ? `<a class="btn btn-ghost" href="${act[1]}">${esc(act[0])}</a>` : `<button class="btn btn-ghost" data-alert="${esc(act[1])}">${esc(act[0])}</button>`) : ''}</div>`).join('');
   }
+  $('#alerts').addEventListener('click', async e => {
+    const b = e.target.closest('[data-alert]'); if (!b) return;
+    if (b.dataset.alert === 'resume') { try { await api('settings', { method: 'PUT', body: { paused: false } }); toast('Sending resumed'); refreshStatus(); } catch (err) { toast(err.message, true); } }
+  });
+
   async function loadGroups() {
+    try { const r = await api('groups'); S.groups = r.groups; S.sync = r.sync; } catch { /* keep old */ }
+    clearTimeout(S.syncPoll);
+    if (S.sync?.running) S.syncPoll = setTimeout(async () => { await loadGroups(); if (S.view === 'compose') renderPicker(); if (S.view === 'whatsapp') renderSyncDetail(); }, 4000);
+  }
+  async function loadJobs() {
     try {
-      const r = await api('groups');
-      state.groups = r.groups;
-      state.groupSync = r.sync;
-      $('#groups-note').textContent = syncNote(r.sync);
-      $('#groups-refresh').disabled = r.sync.running;
-      clearTimeout(state.syncPoll);
-      if (r.sync.running) state.syncPoll = setTimeout(loadGroups, 4000);
-    } catch (err) { $('#groups-note').textContent = err.message; }
-    renderGroups();
+      const [u, p] = await Promise.all([api('jobs?view=upcoming'), api('jobs?view=history')]);
+      S.upcoming = u.jobs; S.past = p.jobs;
+    } catch { return; }
+    $('#count-scheduled').textContent = S.upcoming.length || '';
+    const failed = S.past.filter(j => j.status === 'done_with_errors' && Date.now() - j.updatedAt < 7 * DAY).length;
+    $('#count-failed').textContent = failed || '';
   }
-  async function syncGroups() {
-    try { await api('groups/sync', { method: 'POST' }); toast('Syncing groups from WhatsApp…'); }
-    catch (err) { toast(err.message, true); }
-    loadGroups();
+  async function loadLists() { try { S.lists = (await api('lists')).lists; } catch { /* keep */ } }
+  async function loadTemplates() { try { S.templates = (await api('templates')).templates; } catch { /* keep */ } }
+  const findJob = id => S.upcoming.find(j => j.id === id) || S.past.find(j => j.id === id);
+  const pacingLabel = j => `${dur(j.gapMin)}–${dur(j.gapMax)} between groups`;
+  const repeatLabel = days => days.length === 7 ? 'every day' : [1, 2, 3, 4, 5, 6, 0].filter(d => days.includes(d)).map(d => DOW[d]).join(', ');
+
+  // ============ Today ============
+  function renderToday() {
+    const now = Date.now(), t = ist(now);
+    const h = new Date(now + IST).getUTCHours();
+    $('#today-title').textContent = `${h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'}`;
+    $('#today-date').textContent = `${DOW_LONG[t.dow]}, ${t.d} ${MON_LONG[t.m]}. Times are India time.`;
+    const s = S.status || { wa: {}, sentToday: 0, dailyCap: 30 };
+    const live = s.paused ? ['warn', 'Paused'] : s.dryRun ? ['warn', 'Practice mode'] : ['ok', 'Live'];
+    const waOk = s.wa.status === 'ready';
+    $('#statusline').innerHTML = `
+      <a class="stat" href="${isAdmin() ? '#whatsapp' : '#today'}"><small>WhatsApp</small><b><span class="dot ${waOk ? 'ok' : 'bad'}"></span>${waOk ? esc(s.wa.name || 'Connected') : 'Not connected'}</b></a>
+      <a class="stat" href="${isAdmin() ? '#settings' : '#today'}"><small>Sending</small><b><span class="dot ${live[0]}"></span>${live[1]}</b></a>
+      <a class="stat" href="#sent"><small>Sent today</small><b class="num">${s.sentToday} <span class="hint">of ${s.dailyCap}</span></b><span class="meter"><i data-w="${Math.min(100, Math.round(s.sentToday / s.dailyCap * 100))}"></i></span></a>`;
+
+    const week = S.upcoming.filter(j => j.startAt < now + 7 * DAY);
+    $('#today-agenda').innerHTML = week.length ? agendaHtml(week) : `<div class="empty"><b>Nothing scheduled this week</b><p>Write a message once, pick your groups, and WA Box sends it at the right time with safe gaps.</p><a class="btn btn-primary" href="#compose">New message</a></div>`;
+
+    const recentIssues = S.past.filter(j => j.status === 'done_with_errors' && now - j.updatedAt < 7 * DAY).slice(0, 5);
+    $('#today-attention').innerHTML = recentIssues.map(j => {
+      const bad = j.sends.filter(x => ['failed', 'missed', 'skipped'].includes(x.status)).length;
+      return `<div class="pl-row clickable" data-job="${j.id}"><span><b>${esc(jobName(j))}</b><small>${plural(bad, 'group')} didn't get it · ${esc(whenLabel(j.runAt))}</small></span>${pill('failed')}</div>`;
+    }).join('');
+    loadSendsQuiet().then(() => {
+      $('#today-recent').innerHTML = S.sends.filter(x => ['sent', 'dry_run'].includes(x.status)).slice(0, 6)
+        .map(x => `<div class="pl-row clickable" data-job="${x.jobId}"><span><b>${esc(x.group)}</b><small>${esc(firstLine(x.preview))} · ${esc(ago(x.at))}</small></span>${pill(x.status)}</div>`).join('');
+    });
   }
-  function renderGroups() {
+  async function loadSendsQuiet() { try { S.sends = (await api('sends')).sends; } catch { /* keep */ } }
+  ['#today-attention', '#today-recent', '#today-agenda', '#sched-list'].forEach(sel => $(sel).addEventListener('click', e => {
+    const r = e.target.closest('[data-job]'); if (r) openDrawer(Number(r.dataset.job));
+  }));
+
+  function agendaHtml(jobs, dateOf = j => j.startAt) {
+    const byDay = new Map();
+    for (const j of jobs) { const k = ist(dateOf(j)).date; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(j); }
+    return [...byDay.entries()].map(([k, js]) => {
+      const ms = istEpoch(k, '12:00'); const rel = relDay(ms); const x = ist(ms);
+      return `<div class="day"><h3>${rel ? `<span class="rel">${rel}</span>` : ''}<span>${DOW_LONG[x.dow]}, ${x.d} ${MON[x.m]}</span></h3><div class="day-rows">${js.map(jobRowHtml).join('')}</div></div>`;
+    }).join('');
+  }
+  function jobRowHtml(j) {
+    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed'].includes(s.status)).length;
+    const pct = j.groups.length ? Math.round(done / j.groups.length * 100) : 0;
+    return `<button class="job-row" type="button" data-job="${j.id}">
+      <span class="job-time">${ist(j.runAt).time}</span>
+      <span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
+        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(j.createdBy.split('@')[0])}</span></span>
+        ${j.status === 'running' ? `<span class="progress"><i data-w="${pct}"></i></span>` : ''}
+        ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
+      </span>${pill(j.status)}</button>`;
+  }
+  // progress widths without inline styles in markup
+  new MutationObserver(() => $$('i[data-w]').forEach(i => { i.style.width = i.dataset.w + '%'; i.removeAttribute('data-w'); }))
+    .observe(document.body, { childList: true, subtree: true });
+
+  // ============ Drawer ============
+  function openDrawer(id) {
+    const j = findJob(id);
+    if (!j) { toast('That message is no longer available', true); return; }
+    S.drawerJob = id; fillDrawer(j);
+    $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
+  }
+  function closeDrawer() { S.drawerJob = null; $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); }
+  $('#drawer-close').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.drawerJob) closeDrawer(); });
+  function fillDrawer(j) {
+    $('#dr-title').textContent = jobName(j);
+    $('#dr-sub').textContent = `${whenLabel(j.runAt)}${j.repeatDays.length ? ` · repeats ${repeatLabel(j.repeatDays)}` : ''}`;
+    const byId = new Map(j.sends.map(s => [s.group_id, s]));
+    const sent = j.sends.filter(s => ['sent', 'dry_run'].includes(s.status)).length;
+    $('#dr-body').innerHTML = `
+      ${j.note ? `<div class="alert warn">${ICON.warn}<span>${esc(j.note)}</span></div>` : ''}
+      <dl class="facts">
+        <dt>Status</dt><dd>${pill(j.status)}</dd>
+        <dt>Groups</dt><dd>${plural(j.groups.length, 'group')}${j.sends.length ? `, ${sent} delivered` : ''}</dd>
+        <dt>Pacing</dt><dd>${esc(pacingLabel(j))}</dd>
+        <dt>Created by</dt><dd>${esc(j.createdBy)}</dd>
+        ${j.updatedBy !== j.createdBy ? `<dt>Last edited by</dt><dd>${esc(j.updatedBy)}</dd>` : ''}
+      </dl>
+      <div class="mini-bubble"><div class="bubble">${j.hasImage ? `<img src="api/jobs/${j.id}/image" alt="">` : ''}<div class="bubble-text">${waFormat(j.message)}</div><span class="bubble-time">${ist(j.runAt).time}</span></div></div>
+      <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
+        return `<div><span class="gn">${esc(g.name)}</span>${s ? pill(s.status) : '<span class="pill scheduled">Waiting</span>'}${s?.error ? `<small>${esc(s.error)}</small>` : ''}</div>`; }).join('')}</div></div>`;
+    const acts = [];
+    if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
+    else if (j.status === 'running') acts.push(['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['cancel', 'Stop sending', 'btn-danger-ghost']);
+    else acts.push(['dup', 'Send again', 'btn-primary']);
+    $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
+  }
+  $('#dr-actions').addEventListener('click', async e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const j = findJob(S.drawerJob); if (!j) return;
+    try {
+      if (b.dataset.act === 'edit') location.hash = `compose?edit=${j.id}`;
+      if (b.dataset.act === 'dup') location.hash = `compose?dup=${j.id}`;
+      if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts within a minute and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
+        await api(`jobs/${j.id}/send-now`, { method: 'POST' }); toast('Sending starts within a minute'); await loadJobs(); fillDrawer(findJob(j.id));
+      }
+      if (b.dataset.act === 'cancel') {
+        const running = j.status === 'running';
+        if (await dialog({ title: running ? 'Stop sending?' : 'Cancel this message?', html: `<p>${running ? "Groups that already got it keep it. The rest won't get it." : "It won't be sent."}${j.repeatDays.length ? ' This also ends the weekly repeat.' : ''}</p>`, ok: running ? 'Stop sending' : 'Cancel message', cancel: 'Keep it', danger: true })) {
+          await api(`jobs/${j.id}/cancel`, { method: 'POST' }); toast(running ? 'Stopped' : 'Cancelled'); await loadJobs(); closeDrawer(); route();
+        }
+      }
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ============ Scheduled ============
+  function renderScheduled() {
+    const f = S.schedFilter;
+    $$('#sched-tabs button').forEach(b => b.classList.toggle('on', b.dataset.filter === f));
+    let jobs, dateOf = j => j.startAt;
+    if (f === 'upcoming') jobs = S.upcoming;
+    else if (f === 'repeat') jobs = S.upcoming.filter(j => j.repeatDays.length);
+    else { jobs = S.past; dateOf = j => j.runAt; }
+    $('#sched-list').innerHTML = jobs.length ? agendaHtml(jobs, dateOf) : `<div class="empty"><b>${f === 'past' ? 'Nothing finished yet' : f === 'repeat' ? 'No repeating messages' : 'Nothing scheduled'}</b><p>${f === 'repeat' ? 'Turn on "Repeat every week" when you write a message, for things like weekend class reminders.' : 'Messages you schedule show up here, grouped by day.'}</p>${f !== 'past' ? '<a class="btn btn-primary" href="#compose">New message</a>' : ''}</div>`;
+  }
+  $('#sched-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.schedFilter = b.dataset.filter; renderScheduled(); } });
+
+  // ============ Sent ============
+  async function renderSent() {
+    await loadSendsQuiet();
+    const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Failed or skipped', ['failed', 'missed', 'skipped', 'retry']], practice: ['Practice', ['dry_run']] };
+    const count = k => k === 'all' ? S.sends.length : S.sends.filter(s => groups[k][1].includes(s.status)).length;
+    $('#sent-tabs').innerHTML = Object.entries(groups).map(([k, [l]]) => `<button role="tab" data-filter="${k}" class="${S.sentFilter === k ? 'on' : ''}">${l}<small>${count(k)}</small></button>`).join('');
+    const q = $('#sent-search').value.trim().toLowerCase();
+    const rows = S.sends.filter(s => (S.sentFilter === 'all' || groups[S.sentFilter][1].includes(s.status)) &&
+      (!q || s.group.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q)));
+    $('#sent-table tbody').innerHTML = rows.length ? rows.map(s => `<tr data-job="${s.jobId}">
+      <td class="when">${esc(whenLabel(s.at))}</td><td>${esc(s.group)}</td><td class="msg">${esc(firstLine(s.preview))}</td>
+      <td>${pill(s.status)}${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
+      : `<tr class="empty-row"><td colspan="4">${S.sends.length ? 'Nothing matches.' : 'Nothing has been sent yet.'}</td></tr>`;
+  }
+  $('#sent-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.sentFilter = b.dataset.filter; renderSent(); } });
+  $('#sent-search').addEventListener('input', () => renderSent());
+  $('#sent-table').addEventListener('click', e => { const r = e.target.closest('tr[data-job]'); if (r) openDrawer(Number(r.dataset.job)); });
+
+  // ============ Templates ============
+  async function renderTemplates() {
+    await loadTemplates();
+    $('#tpl-list').innerHTML = S.templates.length ? S.templates.map(t => `<article class="card"><h3>${esc(t.name)}</h3>
+      <div class="body">${waFormat(t.message)}</div><span class="meta">Saved by ${esc(t.created_by)}</span>
+      <div class="btn-row"><a class="btn btn-primary btn-sm" href="#compose?tpl=${t.id}">Use</a><button class="btn btn-danger-ghost btn-sm" data-del="${t.id}" type="button">Delete</button></div></article>`).join('')
+      : `<div class="empty"><b>No templates yet</b><p>Save a message as a template while writing it, or create one here.</p><button class="btn btn-primary" type="button" data-new>New template</button></div>`;
+  }
+  async function newTemplate(message = '') {
+    const ok = await dialog({ title: 'Save as template', ok: 'Save template',
+      html: `<label class="fld"><span>Name</span><input id="tpl-name" maxlength="60" placeholder="e.g. Weekend class reminder"></label>
+             <label class="fld"><span>Message</span><textarea id="tpl-msg" rows="7" maxlength="4000"></textarea></label>`,
+      onOpen: () => { $('#tpl-msg').value = message; $('#tpl-name').focus(); } });
+    if (!ok) return false;
+    try { await api('templates', { method: 'POST', body: { name: $('#tpl-name').value, message: $('#tpl-msg').value } }); toast('Template saved'); return true; }
+    catch (err) { toast(err.message, true); return false; }
+  }
+  $('#tpl-new').addEventListener('click', async () => { if (await newTemplate()) renderTemplates(); });
+  $('#tpl-list').addEventListener('click', async e => {
+    if (e.target.closest('[data-new]')) { if (await newTemplate()) renderTemplates(); return; }
+    const d = e.target.closest('[data-del]'); if (!d) return;
+    if (await dialog({ title: 'Delete this template?', html: '<p>Messages already scheduled from it are not affected.</p>', ok: 'Delete', danger: true })) {
+      try { await api('templates/' + d.dataset.del, { method: 'DELETE' }); toast('Template deleted'); renderTemplates(); } catch (err) { toast(err.message, true); }
+    }
+  });
+
+  // ============ Group lists ============
+  async function renderLists() {
+    await Promise.all([loadLists(), loadGroups()]);
+    $('#lists-list').innerHTML = S.lists.length ? S.lists.map(l => `<article class="card"><h3>${esc(l.name)}</h3>
+      <span class="meta">${plural(l.groups.length, 'group')}${l.missing ? ` · ${l.missing} no longer available` : ''}</span>
+      <div class="tags">${l.groups.slice().sort(byName).slice(0, 8).map(g => `<span class="tag">${esc(g.name)}</span>`).join('')}${l.groups.length > 8 ? `<span class="tag">+${l.groups.length - 8} more</span>` : ''}</div>
+      <div class="btn-row"><a class="btn btn-primary btn-sm" href="#compose?list=${l.id}">Write to this list</a><button class="btn btn-ghost btn-sm" data-edit="${l.id}" type="button">Edit</button><button class="btn btn-danger-ghost btn-sm" data-del="${l.id}" type="button">Delete</button></div></article>`).join('')
+      : `<div class="empty"><b>No group lists yet</b><p>Make one for each set you message together, like the 15 weekend cohorts or the Thursday–Friday batch.</p><button class="btn btn-primary" type="button" data-new>New list</button></div>`;
+  }
+  async function editList(list) {
+    const picked = new Set(list ? list.groups.map(g => g.id) : []);
+    const draw = () => {
+      const q = ($('#dl-search')?.value || '').toLowerCase();
+      $('#dl-groups').innerHTML = S.groups.filter(g => !q || g.name.toLowerCase().includes(q)).sort(byName).map(g => `<label class="g-opt"><input type="checkbox" data-id="${esc(g.id)}" ${picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span></label>`).join('') || '<div class="g-empty">No saved groups match.</div>';
+      $('#dl-count').textContent = plural(picked.size, 'group') + ' selected';
+    };
+    const ok = await dialog({ title: list ? 'Edit list' : 'New group list', ok: list ? 'Save list' : 'Create list',
+      html: `<label class="fld"><span>List name</span><input id="dl-name" maxlength="60" placeholder="e.g. Weekend cohorts"></label>
+        <input id="dl-search" type="search" placeholder="Search groups"><div class="dlg-picker" id="dl-groups"></div><p class="hint" id="dl-count"></p>`,
+      onOpen: () => {
+        $('#dl-name').value = list?.name || ''; draw();
+        $('#dl-search').addEventListener('input', draw);
+        $('#dl-groups').addEventListener('change', e => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? picked.add(id) : picked.delete(id); $('#dl-count').textContent = plural(picked.size, 'group') + ' selected'; });
+        $('#dl-name').focus();
+      } });
+    if (!ok) return;
+    try {
+      await api(list ? `lists/${list.id}` : 'lists', { method: list ? 'PUT' : 'POST', body: { name: $('#dl-name').value, groupIds: [...picked] } });
+      toast(list ? 'List saved' : 'List created'); renderLists();
+    } catch (err) { toast(err.message, true); }
+  }
+  $('#list-new').addEventListener('click', () => editList(null));
+  $('#lists-list').addEventListener('click', async e => {
+    if (e.target.closest('[data-new]')) return editList(null);
+    const ed = e.target.closest('[data-edit]'); if (ed) return editList(S.lists.find(l => String(l.id) === ed.dataset.edit));
+    const d = e.target.closest('[data-del]'); if (!d) return;
+    if (await dialog({ title: 'Delete this list?', html: '<p>The groups themselves stay. Scheduled messages are not affected.</p>', ok: 'Delete', danger: true })) {
+      try { await api('lists/' + d.dataset.del, { method: 'DELETE' }); toast('List deleted'); renderLists(); } catch (err) { toast(err.message, true); }
+    }
+  });
+
+  // ============ Compose ============
+  const form = $('#job-form');
+  const C = () => S.compose;
+  const DRAFT_KEY = 'wabox.draft.v1';
+  function blankCompose() {
+    const last = store.get('wabox.lastTime') || '10:00';
+    return { mode: 'new', id: null, picked: new Map(), message: '', date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
+      gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, dirty: false, search: '' };
+  }
+  async function openCompose() {
+    S.composeQuery = location.hash.includes('?') ? '?' + location.hash.split('?')[1] : '';
+    await Promise.all([loadGroups(), loadLists()]);
+    const p = S.params; let c = blankCompose(); let note = '';
+    const fromJob = id => findJob(Number(id));
+    if (p.edit || p.dup) {
+      const j = fromJob(p.edit || p.dup);
+      if (!j) { toast('That message is no longer available', true); location.hash = 'scheduled'; return; }
+      if (p.edit && j.status !== 'scheduled') { toast("This message has started sending, so it can't be edited. You can duplicate it.", true); location.hash = `compose?dup=${j.id}`; return; }
+      c.mode = p.edit ? 'edit' : 'dup'; c.id = p.edit ? j.id : null;
+      c.message = j.message; j.groups.forEach(g => c.picked.set(g.id, { id: g.id, name: g.name }));
+      if (p.edit) { c.date = j.date; c.time = j.time; c.repeat = [...j.repeatDays]; c.keepImage = j.hasImage; c.imageUrl = j.hasImage ? `api/jobs/${j.id}/image` : null; }
+      else { c.time = j.time; c.repeat = [...j.repeatDays]; }
+      c.gapMin = j.gapMin; c.gapMax = j.gapMax;
+      c.pace = j.gapMin === 60 && j.gapMax === 180 ? 'gentle' : j.gapMin === 40 && j.gapMax === 120 ? 'standard' : 'custom';
+      if (p.dup && j.hasImage) note = "The image from the original isn't copied. Add it again if you need it.";
+    } else {
+      const d = store.get(DRAFT_KEY);
+      if (d && (d.message || (d.picked || []).length)) {
+        Object.assign(c, d, { picked: new Map((d.picked || []).map(g => [g.id, g])), image: null, imageUrl: null, keepImage: false, dirty: false });
+        if (istEpoch(c.date, c.time) < Date.now()) c.date = ist(Date.now() + DAY).date;
+        note = 'Draft restored.';
+      }
+      if (p.tpl) { await loadTemplates(); const t = S.templates.find(x => String(x.id) === p.tpl); if (t) { c.message = t.message; note = `Started from template "${t.name}".`; } }
+      if (p.list) { const l = S.lists.find(x => String(x.id) === p.list); if (l) { c.picked = new Map(l.groups.map(g => [g.id, g])); note = `Groups from "${l.name}".`; } }
+    }
+    S.compose = c;
+    $('#compose-title').textContent = { new: 'New message', edit: 'Edit message', dup: 'Send again' }[c.mode];
+    $('#compose-lede').textContent = c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.';
+    $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
+    $('#job-error').textContent = '';
+    $('#group-search').value = '';
+    $('#message').value = c.message;
+    $('#date').value = c.date; $('#time').value = c.time;
+    $('#image').value = '';
+    $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax;
+    $('#repeat-on').checked = c.repeat.length > 0;
+    $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
+    $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : 'Cancel';
+    renderPicker(); renderDayChips(); renderPace(); renderImage(); updateCompose();
+    if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
+  }
+  function markDirty() {
+    const c = C(); if (!c) return; c.dirty = true;
+    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax });
+    updateCompose();
+  }
+  $('#draft-note').addEventListener('click', e => { if (e.target.id === 'draft-clear') { store.del(DRAFT_KEY); S.params = {}; openCompose(); } });
+
+  // groups picker
+  function renderPicker() {
+    const c = C(); if (!c) return;
     const q = $('#group-search').value.trim().toLowerCase();
-    const shown = state.groups.filter(g => !q || g.name.toLowerCase().includes(q));
-    $('#group-list').innerHTML = shown.length
-      ? shown.map(g => `<label><input type="checkbox" data-id="${esc(g.id)}" ${state.picked.has(g.id) ? 'checked' : ''}> ${esc(g.name)}</label>`).join('')
-      : `<div class="empty">${state.groups.length ? 'No group matches that search.' : 'No saved groups yet. Connect WhatsApp, then press “Sync from WhatsApp”.'}</div>`;
-    $('#group-chips').innerHTML = [...state.picked.values()].map(g => `<span class="chip">${esc(g.name)}<button type="button" data-remove="${esc(g.id)}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('');
-    $('#group-picked').textContent = state.picked.size;
-    updatePreview();
+    const missing = [...c.picked.values()].filter(g => !S.groups.some(x => x.id === g.id));
+    const all = [...S.groups, ...missing.map(g => ({ ...g, missing: true }))];
+    const shown = all.filter(g => !q || g.name.toLowerCase().includes(q));
+    // unavailable ones first (so they can be removed), then A to Z; order never changes while ticking
+    shown.sort((a, b) => (!!b.missing - !!a.missing) || byName(a, b));
+    $('#group-list').innerHTML = shown.length ? shown.map(g => `<label class="g-opt${g.missing ? ' missing' : ''}"><input type="checkbox" data-id="${esc(g.id)}" ${c.picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span>${g.missing ? '<span class="hint">No longer available</span>' : ''}</label>`).join('')
+      : `<div class="g-empty">${S.groups.length ? 'No group matches that search.' : S.sync?.running ? 'Syncing groups from WhatsApp…' : 'No groups yet. Once WhatsApp is connected, press “Sync from WhatsApp”.'}</div>`;
+    $('#picked-count').textContent = c.picked.size;
+    $('#list-chips').innerHTML = S.lists.map(l => {
+      const ids = l.groups.map(g => g.id); const n = ids.filter(id => c.picked.has(id)).length;
+      const cls = ids.length && n === ids.length ? 'on' : n ? 'partial' : '';
+      return `<button type="button" class="lchip ${cls}" data-list="${l.id}" aria-pressed="${cls === 'on'}">${esc(l.name)} <small>${ids.length}</small></button>`;
+    }).join('');
+    const s = S.sync;
+    $('#groups-note').textContent = !s ? '' : s.running ? 'Syncing from WhatsApp…' : s.error ? `Last sync failed: ${s.error}` : s.finishedAt ? `${plural(S.groups.length, 'group')} · synced ${ago(s.finishedAt)}` : 'Not synced yet';
+    $('#groups-sync').disabled = !!s?.running;
+    $('#save-as-list').disabled = c.picked.size === 0;
   }
-  $('#group-search').addEventListener('input', renderGroups);
+  $('#group-search').addEventListener('input', renderPicker);
   $('#group-list').addEventListener('change', e => {
     const id = e.target.dataset.id; if (!id) return;
-    const g = state.groups.find(x => x.id === id);
-    if (e.target.checked) state.picked.set(id, g); else state.picked.delete(id);
-    renderGroups();
+    const c = C(); const g = S.groups.find(x => x.id === id) || c.picked.get(id);
+    e.target.checked ? c.picked.set(id, { id, name: g.name }) : c.picked.delete(id);
+    renderPicker(); markDirty();
   });
-  $('#group-chips').addEventListener('click', e => { const id = e.target.dataset.remove; if (id) { state.picked.delete(id); renderGroups(); } });
+  $('#list-chips').addEventListener('click', e => {
+    const b = e.target.closest('[data-list]'); if (!b) return;
+    const c = C(); const l = S.lists.find(x => String(x.id) === b.dataset.list);
+    if (b.classList.contains('on')) l.groups.forEach(g => c.picked.delete(g.id));
+    else l.groups.forEach(g => c.picked.set(g.id, g));
+    renderPicker(); markDirty();
+  });
   $('#groups-all').addEventListener('click', () => {
-    const q = $('#group-search').value.trim().toLowerCase();
-    state.groups.filter(g => !q || g.name.toLowerCase().includes(q)).forEach(g => state.picked.set(g.id, g));
-    renderGroups();
+    const q = $('#group-search').value.trim().toLowerCase(); const c = C();
+    S.groups.filter(g => !q || g.name.toLowerCase().includes(q)).forEach(g => c.picked.set(g.id, g));
+    renderPicker(); markDirty();
   });
-  $('#groups-none').addEventListener('click', () => { state.picked.clear(); renderGroups(); });
-  $('#groups-refresh').addEventListener('click', syncGroups);
-
-  // ---------- job form ----------
-  const form = $('#job-form');
-  function tomorrow() { return ist(Date.now() + 86400000).date; }
-  function nextDow(dow) { for (let i = 1; i <= 7; i++) { const x = ist(Date.now() + i * 86400000); if (x.dow === dow) return x.date; } }
-
-  function resetForm() {
-    form.reset();
-    state.editingId = null; state.picked.clear();
-    form.date.value = tomorrow(); form.time.value = '10:00';
-    $('#job-form-title').textContent = 'New scheduled message';
-    $('#job-submit').textContent = 'Schedule message';
-    $('#cancel-edit').classList.add('hidden');
-    $('#remove-image-wrap').classList.add('hidden');
-    $('#job-error').textContent = '';
-    $('#msg-count').textContent = '0';
-    renderGroups();
+  $('#groups-none').addEventListener('click', () => { C().picked.clear(); renderPicker(); markDirty(); });
+  $('#groups-sync').addEventListener('click', syncGroups);
+  async function syncGroups() {
+    try { await api('groups/sync', { method: 'POST' }); toast('Syncing groups from WhatsApp. This can take a minute.'); }
+    catch (err) { toast(err.message, true); }
+    await loadGroups(); if (S.view === 'compose') renderPicker(); if (S.view === 'whatsapp') renderSyncDetail();
   }
-  $('#cancel-edit').addEventListener('click', resetForm);
-  form.message.addEventListener('input', () => { $('#msg-count').textContent = form.message.value.length; });
-  ['date', 'time', 'gapMin', 'gapMax'].forEach(n => form[n].addEventListener('input', updatePreview));
-  $('.quick').addEventListener('click', e => {
-    const q = e.target.dataset.quick; if (!q) return;
-    form.date.value = q === 'tomorrow' ? tomorrow() : nextDow({ thu: 4, fri: 5, sat: 6, sun: 0 }[q]);
-    updatePreview();
+  $('#save-as-list').addEventListener('click', async () => {
+    const c = C();
+    const ok = await dialog({ title: 'Save these groups as a list', ok: 'Save list',
+      html: `<p>${plural(c.picked.size, 'group')} selected. Next time, pick them all with one click.</p><label class="fld"><span>List name</span><input id="sl-name" maxlength="60" placeholder="e.g. Weekend cohorts"></label>`,
+      onOpen: () => $('#sl-name').focus() });
+    if (!ok) return;
+    try { await api('lists', { method: 'POST', body: { name: $('#sl-name').value, groupIds: [...c.picked.keys()] } }); toast('List saved'); await loadLists(); renderPicker(); }
+    catch (err) { toast(err.message, true); }
   });
-  $('#repeat-days').addEventListener('change', updatePreview);
 
-  function repeatDays() { return $$('#repeat-days input:checked').map(i => Number(i.value)); }
-
-  function updatePreview() {
-    const n = state.picked.size;
-    const el = $('#job-preview');
-    if (!n || !form.date.value || !form.time.value) { el.textContent = 'Pick groups and a time to see the send window.'; return; }
-    const start = istEpoch(form.date.value, form.time.value);
-    const gMin = Math.max(30, Number(form.gapMin.value) || 30), gMax = Math.max(gMin, Number(form.gapMax.value) || gMin);
-    const avg = (gMin + gMax) / 2 + 5;
-    const end = start + (n - 1) * avg * 1000 + 60000;
-    const past = start < Date.now() - 60000;
-    const days = repeatDays();
-    el.innerHTML = `<b>${plural(n, 'group')}</b> · starts ${esc(fmt(start))} IST (± up to 1 min)` +
-      (n > 1 ? ` · finishes around <b>${esc(fmtTime(end))}</b>` : '') +
-      (days.length ? ` · repeats every ${esc(days.map(d => DAY_NAMES[d]).join(', '))}` : '') +
-      (past ? `<br><span class="form-error">That time is already past.</span>` : '') +
-      (state.status && n > state.status.dailyCap ? `<br>More than the daily limit (${state.status.dailyCap}); the rest will go out tomorrow.` : '');
+  // message
+  $('#message').addEventListener('input', e => { C().message = e.target.value; markDirty(); });
+  $('.toolbar').addEventListener('click', e => {
+    const b = e.target.closest('[data-wrap]'); if (!b) return;
+    const ta = $('#message'), w = b.dataset.wrap, { selectionStart: s, selectionEnd: en, value: v } = ta;
+    const sel = v.slice(s, en) || 'text';
+    ta.setRangeText(w + sel + w, s, en, 'select');
+    ta.setSelectionRange(s + w.length, s + w.length + sel.length); ta.focus();
+    C().message = ta.value; markDirty();
+  });
+  $('#image').addEventListener('change', e => {
+    const f = e.target.files[0]; const c = C();
+    if (!f) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) { toast('Use a JPG, PNG or WebP image', true); e.target.value = ''; return; }
+    if (f.size > 5 * 1024 * 1024) { toast('That image is over 5 MB. Use a smaller one.', true); e.target.value = ''; return; }
+    if (c.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(c.imageUrl);
+    c.image = f; c.imageUrl = URL.createObjectURL(f); c.removeImage = false; c.keepImage = false;
+    renderImage(); markDirty();
+  });
+  $('#image-remove').addEventListener('click', () => {
+    const c = C(); if (c.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(c.imageUrl);
+    c.removeImage = c.keepImage; c.image = null; c.imageUrl = null; c.keepImage = false; $('#image').value = '';
+    renderImage(); markDirty();
+  });
+  function renderImage() {
+    const c = C();
+    $('#attach-label').textContent = c.imageUrl ? (c.image ? c.image.name : 'Image attached') : 'Add image';
+    $('#image-remove').classList.toggle('hidden', !c.imageUrl);
+    const img = $('#pv-image');
+    if (c.imageUrl) { img.src = c.imageUrl; img.classList.remove('hidden'); } else { img.removeAttribute('src'); img.classList.add('hidden'); }
   }
+  $('#tpl-save').addEventListener('click', async () => {
+    const m = $('#message').value.trim();
+    if (!m) { toast('Write the message first', true); return; }
+    await newTemplate(m);
+  });
+  $('#tpl-load').addEventListener('click', async () => {
+    await loadTemplates();
+    if (!S.templates.length) { toast('No templates yet. Write a message and press “Save as template”.'); return; }
+    let chosen = null;
+    await dialog({ title: 'Use a template', ok: null, cancel: 'Close',
+      html: `<div class="dlg-picker">${S.templates.map(t => `<button type="button" class="tpl-opt" data-id="${t.id}"><b>${esc(t.name)}</b><span>${esc(firstLine(t.message))}</span></button>`).join('')}</div>`,
+      onOpen: d => { $('#dialog-content').onclick = e => { const b = e.target.closest('.tpl-opt'); if (b) { chosen = S.templates.find(t => String(t.id) === b.dataset.id); d.close(); } }; } });
+    if (!chosen) return;
+    const c = C();
+    if (c.message.trim() && c.message !== chosen.message && !await dialog({ title: 'Replace your message?', html: '<p>The text you wrote will be replaced by the template.</p>', ok: 'Replace' })) return;
+    c.message = chosen.message; $('#message').value = c.message; markDirty();
+  });
+
+  // when
+  function renderDayChips() {
+    const c = C(); const chips = [];
+    for (let i = 0; i < 8; i++) { const ms = Date.now() + i * DAY; const x = ist(ms); chips.push({ date: x.date, b: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DOW[x.dow], s: `${x.d} ${MON[x.m]}` }); }
+    $('#day-chips').innerHTML = chips.map(ch => `<button type="button" class="dchip ${ch.date === c.date ? 'on' : ''}" data-date="${ch.date}"><b>${ch.b}</b><small>${ch.s}</small></button>`).join('');
+  }
+  $('#day-chips').addEventListener('click', e => { const b = e.target.closest('[data-date]'); if (!b) return; C().date = b.dataset.date; $('#date').value = b.dataset.date; renderDayChips(); markDirty(); });
+  $('#date').addEventListener('input', e => { C().date = e.target.value; renderDayChips(); markDirty(); });
+  $('#time').addEventListener('input', e => { C().time = e.target.value; markDirty(); });
+  $('#repeat-on').addEventListener('change', e => {
+    const c = C();
+    if (e.target.checked && !c.repeat.length && c.date) { c.repeat = [ist(istEpoch(c.date, '12:00')).dow]; $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); }); }
+    if (!e.target.checked) c.repeat = [];
+    markDirty();
+  });
+  $('#repeat-days').addEventListener('change', () => { C().repeat = $$('#repeat-days input:checked').map(i => Number(i.value)); markDirty(); });
+
+  // pacing
+  function renderPace() {
+    const c = C();
+    $$('#pacing button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.pace === c.pace)));
+    $('#pace-custom').classList.toggle('hidden', c.pace !== 'custom');
+  }
+  $('#pacing').addEventListener('click', e => {
+    const b = e.target.closest('[data-pace]'); if (!b) return; const c = C();
+    c.pace = b.dataset.pace;
+    if (b.dataset.min) { c.gapMin = Number(b.dataset.min); c.gapMax = Number(b.dataset.max); $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax; }
+    renderPace(); markDirty();
+  });
+  ['gapMin', 'gapMax'].forEach(k => $('#' + k).addEventListener('input', e => { C()[k] = Number(e.target.value) || 0; markDirty(); }));
+
+  // preview, send plan and checks
+  const avgGap = c => (Math.max(30, c.gapMin) + Math.max(Math.max(30, c.gapMin), c.gapMax)) / 2 + 5;
+  const jobWindow = j => [j.startAt, j.startAt + Math.max(0, j.groups.length - 1) * ((j.gapMin + j.gapMax) / 2 + 5) * 1000 + 60000];
+  function updateCompose() {
+    const c = C(); if (!c) return;
+    const picked = [...c.picked.values()].sort(byName);
+    // counter
+    const n = c.message.length; const counter = $('#msg-count');
+    counter.textContent = `${n} / 4000`; counter.classList.toggle('near', n > 3600);
+    // phone
+    $('#pv-group').textContent = picked[0]?.name || 'Your group';
+    $('#pv-more').textContent = picked.length > 1 ? `and ${plural(picked.length - 1, 'other group')}` : picked.length ? 'WhatsApp group' : 'Pick groups to preview';
+    $('#pv-text').innerHTML = c.message.trim() ? waFormat(c.message) : '<span class="placeholder">Your message appears here as the group will see it.</span>';
+    // timing
+    const validTime = c.date && /^\d{2}:\d{2}$/.test(c.time || '');
+    const runAt = validTime ? istEpoch(c.date, c.time) : null;
+    $('#pv-time').textContent = validTime ? c.time : '';
+    const others = S.upcoming.filter(j => j.id !== c.id);
+    let start = runAt, queuedAfter = null;
+    if (runAt) {
+      for (const j of others.slice().sort((a, b) => a.startAt - b.startAt)) {
+        const [a, b] = jobWindow(j);
+        if (start >= a - 60000 && start <= b) { start = b + 30000; queuedAfter = j; }
+      }
+    }
+    const step = avgGap(c) * 1000;
+    const steps = runAt ? picked.map((g, i) => ({ g, t: start + i * step })) : [];
+    const shownSteps = steps.length > 9 ? [...steps.slice(0, 7), null, steps[steps.length - 1]] : steps;
+    $('#plan-steps').innerHTML = shownSteps.map(s => s ? `<li><time>${i18nTime(s.t, runAt)}</time><span class="node"></span><span>${esc(s.g.name)}</span></li>` : `<li class="more"><time></time><span class="node"></span><span>${steps.length - 8} more groups</span></li>`).join('');
+    $('#plan-summary').textContent = steps.length ? (steps.length === 1 ? `Around ${ist(start).time}` : `${dur((steps.length - 1) * step / 1000)}, ends ~${ist(steps[steps.length - 1].t).time}`) : '';
+
+    // checks
+    const checks = []; const s = S.status || { wa: {}, dailyCap: 30 };
+    if (!picked.length) checks.push(['bad', 'Pick at least one group.']);
+    if (!c.message.trim()) checks.push(['bad', 'Write the message.']);
+    if (!validTime) checks.push(['bad', 'Choose a date and time.']);
+    else if (runAt < Date.now() - 60000) checks.push(['bad', 'That time has already passed. Choose a later time.']);
+    else if (runAt < Date.now() + 3 * 60000) checks.push(['warn', 'This starts within the next few minutes.']);
+    if ($('#repeat-on').checked && !c.repeat.length) checks.push(['bad', 'Pick the days it should repeat on, or turn repeat off.']);
+    const gone = picked.filter(g => !S.groups.some(x => x.id === g.id));
+    if (gone.length) checks.push(['bad', `${plural(gone.length, 'group')} ${gone.length === 1 ? 'is' : 'are'} no longer available. Remove ${gone.length === 1 ? 'it' : 'them'} to continue.`]);
+    if (c.pace === 'custom' && (c.gapMin < 30 || c.gapMax < c.gapMin)) checks.push(['warn', 'Waits under 30 seconds are raised to 30, and the longest wait must be at least the shortest.']);
+    if (runAt && picked.length) {
+      if (queuedAfter) checks.push(['warn', `“${jobName(queuedAfter)}” is sending around then, so this one starts after it, around ${ist(start).time}.`]);
+      const day = ist(runAt).date;
+      const sameDay = others.filter(j => ist(j.runAt).date === day);
+      const planned = sameDay.reduce((n, j) => n + j.groups.length, 0) + (day === todayKey() ? s.sentToday || 0 : 0);
+      if (planned + picked.length > s.dailyCap) {
+        const over = planned + picked.length - s.dailyCap;
+        checks.push(['warn', `That day already has ${planned} planned. ${plural(Math.min(over, picked.length), 'group')} will go past the daily limit of ${s.dailyCap} and get it after midnight.`]);
+      }
+      const msg = c.message.trim();
+      const dupes = sameDay.filter(j => j.message.trim() === msg && j.groups.some(g => c.picked.has(g.id)));
+      if (msg && dupes.length) { const k = new Set(dupes.flatMap(j => j.groups.map(g => g.id)).filter(id => c.picked.has(id))).size;
+        checks.push(['warn', `The same message is already scheduled to ${plural(k, 'of these groups', 'of these groups')} that day.`]); }
+    }
+    if (s.wa.status && s.wa.status !== 'ready') checks.push(['warn', "WhatsApp isn't connected right now. This will wait until it is."]);
+    if (s.dryRun) checks.push(['warn', "Practice mode is on, so this won't actually reach WhatsApp."]);
+    if (!checks.some(x => x[0] === 'bad')) checks.push(['ok', `Each group gets it once, ${pacingLabel({ gapMin: Math.max(30, c.gapMin), gapMax: Math.max(30, c.gapMin, c.gapMax) })}, after a few seconds of "typing…".`]);
+    $('#checks').innerHTML = checks.map(([k, t]) => `<li class="${k}">${k === 'ok' ? ICON.ok : ICON.warn}<span>${esc(t)}</span></li>`).join('');
+    // submit
+    const blocked = checks.some(x => x[0] === 'bad');
+    const btn = $('#job-submit'); btn.disabled = blocked;
+    btn.textContent = c.mode === 'edit' ? 'Save changes' : runAt && !blocked ? `Schedule for ${relDay(runAt) || shortDate(runAt)}, ${c.time}` : 'Schedule';
+  }
+  function i18nTime(t, runAt) { return (t - runAt < 60000 ? '' : '~') + ist(t).time; }
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    $('#job-error').textContent = '';
-    if (!state.picked.size) { $('#job-error').textContent = 'Pick at least one group'; return; }
+    const c = C(); $('#job-error').textContent = '';
     const fd = new FormData();
-    fd.set('title', form.title.value);
-    fd.set('message', form.message.value);
-    fd.set('groups', JSON.stringify([...state.picked.keys()]));
-    fd.set('date', form.date.value); fd.set('time', form.time.value);
-    fd.set('gapMin', form.gapMin.value); fd.set('gapMax', form.gapMax.value);
-    fd.set('repeatDays', JSON.stringify(repeatDays()));
-    if (form.image.files[0]) fd.set('image', form.image.files[0]);
-    if (form.removeImage.checked) fd.set('removeImage', '1');
-    const btn = $('#job-submit'); btn.disabled = true;
+    fd.set('title', ''); fd.set('message', c.message);
+    fd.set('groups', JSON.stringify([...c.picked.values()].sort(byName).map(g => g.id)));
+    fd.set('date', c.date); fd.set('time', c.time);
+    fd.set('gapMin', String(Math.max(30, c.gapMin))); fd.set('gapMax', String(Math.max(30, c.gapMin, c.gapMax)));
+    fd.set('repeatDays', JSON.stringify($('#repeat-on').checked ? c.repeat : []));
+    if (c.image) fd.set('image', c.image);
+    if (c.removeImage) fd.set('removeImage', '1');
+    const btn = $('#job-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Saving…';
     try {
-      if (state.editingId) await api('jobs/' + state.editingId, { method: 'PUT', form: fd });
+      if (c.mode === 'edit') await api('jobs/' + c.id, { method: 'PUT', form: fd });
       else await api('jobs', { method: 'POST', form: fd });
-      toast(state.editingId ? 'Changes saved' : 'Scheduled ✓');
-      resetForm(); showTab('upcoming');
-    } catch (err) { $('#job-error').textContent = err.message; }
-    finally { btn.disabled = false; }
+      store.set('wabox.lastTime', c.time);
+      if (c.mode === 'new') store.del(DRAFT_KEY);
+      c.dirty = false;
+      toast(c.mode === 'edit' ? 'Changes saved' : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`);
+      await loadJobs(); location.hash = 'scheduled';
+    } catch (err) { $('#job-error').textContent = err.message; btn.disabled = false; btn.textContent = label; }
   });
-
-  function editJob(job) {
-    showTab('schedule');
-    resetForm();
-    state.editingId = job.id;
-    form.title.value = job.title; form.message.value = job.message;
-    $('#msg-count').textContent = job.message.length;
-    form.date.value = job.date; form.time.value = job.time;
-    form.gapMin.value = job.gapMin; form.gapMax.value = job.gapMax;
-    $$('#repeat-days input').forEach(i => { i.checked = job.repeatDays.includes(Number(i.value)); });
-    job.groups.forEach(g => state.picked.set(g.id, g));
-    $('#remove-image-wrap').classList.toggle('hidden', !job.hasImage);
-    $('#job-form-title').textContent = `Edit job #${job.id}`;
-    $('#job-submit').textContent = 'Save changes';
-    $('#cancel-edit').classList.remove('hidden');
-    renderGroups();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  // ---------- templates ----------
-  $('#tpl-save').addEventListener('click', async () => {
-    const message = form.message.value.trim();
-    if (!message) { toast('Write a message first', true); return; }
-    const ok = await confirmDialog('Save as template', '<label>Template name<input id="tpl-name" maxlength="60" autofocus></label>', 'Save');
-    if (!ok) return;
-    const name = $('#tpl-name').value.trim();
-    if (!name) { toast('Give it a name', true); return; }
-    try { await api('templates', { method: 'POST', body: { name, message } }); toast('Template saved'); } catch (err) { toast(err.message, true); }
+  $('#compose-discard').addEventListener('click', async () => {
+    const c = C();
+    if (c.mode === 'new') {
+      if ((c.message || c.picked.size) && !await dialog({ title: 'Clear this message?', html: '<p>Your draft and selected groups will be cleared.</p>', ok: 'Clear', danger: true })) return;
+      store.del(DRAFT_KEY); S.params = {}; openCompose();
+    } else { c.dirty = false; history.length > 1 ? history.back() : (location.hash = 'scheduled'); }
   });
-  $('#tpl-load').addEventListener('click', async () => {
-    let list = [];
-    try { list = (await api('templates')).templates; } catch (err) { toast(err.message, true); return; }
-    if (!list.length) { toast('No templates yet. Use “Save as template” first.'); return; }
-    const d = $('#dialog');
-    $('#dialog-title').textContent = 'Use a template';
-    $('#dialog-content').innerHTML = `<div class="stack">${list.map(t => `<button type="button" class="tpl" data-id="${t.id}"><b>${esc(t.name)}</b><span>${esc(t.message)}</span></button>`).join('')}</div>`;
-    $('#dialog-actions').innerHTML = '<button class="btn ghost" value="no">Close</button>';
-    $('#dialog-content').onclick = e => {
-      const b = e.target.closest('.tpl'); if (!b) return;
-      const t = list.find(x => String(x.id) === b.dataset.id);
-      form.message.value = t.message; $('#msg-count').textContent = t.message.length; d.close();
-    };
-    d.onclose = null; d.showModal();
-  });
-  async function loadTemplates() {
-    const el = $('#templates-list');
-    try {
-      const { templates } = await api('templates');
-      el.innerHTML = templates.length ? templates.map(t => `<div class="tpl-row"><button type="button" class="tpl" data-use="${t.id}"><b>${esc(t.name)}</b><span>${esc(t.message)}</span></button>
-        <button type="button" class="btn ghost small danger" data-del="${t.id}">Delete</button></div>`).join('') : '<div class="empty-state">No templates yet.</div>';
-      el.onclick = async e => {
-        const use = e.target.closest('[data-use]'), del = e.target.closest('[data-del]');
-        if (use) { const t = templates.find(x => String(x.id) === use.dataset.use); showTab('schedule'); resetForm(); form.message.value = t.message; $('#msg-count').textContent = t.message.length; }
-        if (del && await confirmDialog('Delete template?', '', 'Delete', true)) { await api('templates/' + del.dataset.del, { method: 'DELETE' }); loadTemplates(); }
-      };
-    } catch (err) { el.innerHTML = `<p class="form-error">${esc(err.message)}</p>`; }
-  }
+  window.addEventListener('beforeunload', e => { if (S.view === 'compose' && S.compose?.dirty && S.compose.mode !== 'new') { e.preventDefault(); e.returnValue = ''; } });
 
-  // ---------- upcoming ----------
-  function jobCard(j, actions) {
-    const sendsById = new Map(j.sends.map(s => [s.group_id, s]));
-    const repeat = j.repeatDays.length ? ` · every ${j.repeatDays.map(d => DAY_NAMES[d]).join(', ')}` : '';
-    const done = j.sends.filter(s => ['sent', 'dry_run'].includes(s.status)).length;
-    return `<article class="job" data-id="${j.id}">
-      <div class="job-top">
-        <div><div class="job-when">${esc(fmt(j.runAt))} IST</div>
-          <div class="muted small">${esc(j.title || 'Job #' + j.id)} · ${plural(j.groups.length, 'group')} · gaps ${j.gapMin}–${j.gapMax}s${esc(repeat)} · by ${esc(j.createdBy)}${j.updatedBy !== j.createdBy ? ', edited by ' + esc(j.updatedBy) : ''}</div></div>
-        <span class="badge ${j.status}">${esc(STATUS_LABEL[j.status] || j.status)}${j.status === 'running' ? ` ${done}/${j.groups.length}` : ''}</span>
-      </div>
-      ${j.note ? `<div class="job-note">${esc(j.note)}</div>` : ''}
-      <div class="row">${j.hasImage ? `<img class="job-thumb" src="api/jobs/${j.id}/image" alt="Attached image">` : ''}<div class="job-msg grow">${esc(j.message)}</div></div>
-      <div class="job-groups">${j.groups.map(g => { const s = sendsById.get(g.id); return `<span class="g ${s ? s.status : ''}" title="${esc(s?.error || (s ? STATUS_LABEL[s.status] : 'Waiting'))}">${esc(g.name)}${s ? ' · ' + esc(STATUS_LABEL[s.status]) : ''}</span>`; }).join('')}</div>
-      ${actions ? `<div class="row end">${actions}</div>` : ''}
-    </article>`;
-  }
-  let upcomingCache = [];
-  async function loadUpcoming(quiet = false) {
-    const el = $('#upcoming-list');
-    try {
-      const { jobs } = await api('jobs?view=upcoming');
-      upcomingCache = jobs;
-      $('#upcoming-count').textContent = jobs.length || '';
-      if (quiet && document.activeElement && el.contains(document.activeElement)) return;
-      el.innerHTML = jobs.length ? jobs.map(j => jobCard(j, j.status === 'scheduled'
-        ? `<button class="btn ghost small" data-act="edit">Edit</button><button class="btn ghost small" data-act="now">Send now</button><button class="btn ghost small danger" data-act="cancel">Cancel</button>`
-        : `<button class="btn ghost small danger" data-act="cancel">Stop</button>`)).join('')
-        : `<div class="empty-state">Nothing scheduled. <button class="link" data-act="new">Schedule a message</button></div>`;
-    } catch (err) { if (!quiet) el.innerHTML = `<p class="form-error">${esc(err.message)}</p>`; }
-  }
-  $('#upcoming-list').addEventListener('click', async e => {
-    const b = e.target.closest('[data-act]'); if (!b) return;
-    if (b.dataset.act === 'new') { showTab('schedule'); return; }
-    const id = Number(b.closest('.job').dataset.id);
-    const job = upcomingCache.find(j => j.id === id);
-    try {
-      if (b.dataset.act === 'edit') editJob(job);
-      if (b.dataset.act === 'now' && await confirmDialog('Send now?', `<p>Start sending to ${plural(job.groups.length, 'group')} now, with the same random gaps.${job.repeatDays.length ? ' This counts as its next weekly send; the repeat continues after that.' : ''}</p>`, 'Send now')) {
-        await api(`jobs/${id}/send-now`, { method: 'POST' }); toast('Starting within a minute'); loadUpcoming();
-      }
-      if (b.dataset.act === 'cancel' && await confirmDialog('Cancel this job?', `<p>Groups already sent to stay sent; the rest won't be sent.${job.repeatDays.length ? ' This also stops the weekly repeat.' : ''}</p>`, 'Cancel job', true)) {
-        await api(`jobs/${id}/cancel`, { method: 'POST' }); toast('Cancelled'); loadUpcoming();
-      }
-    } catch (err) { toast(err.message, true); }
-  });
-
-  // ---------- history ----------
-  async function loadHistory() {
-    try {
-      const [{ sends }, { jobs }] = await Promise.all([api('sends'), api('jobs?view=history')]);
-      $('#history-table tbody').innerHTML = sends.length ? sends.map(s => `<tr><td>${esc(fmt(s.at))}</td><td>${esc(s.group)}</td>
-        <td>${esc(s.title ? s.title + ': ' : '')}${esc(s.preview)}</td><td><span class="badge ${s.status}">${esc(STATUS_LABEL[s.status] || s.status)}</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
-        : '<tr><td colspan="4" class="muted">Nothing sent yet.</td></tr>';
-      $('#past-jobs').innerHTML = jobs.length ? jobs.map(j => jobCard(j)).join('') : '<p class="muted">None yet.</p>';
-    } catch (err) { toast(err.message, true); }
-  }
-  $('#history-reload').addEventListener('click', loadHistory);
-
-  // ---------- WhatsApp (admin) ----------
-  async function loadWhatsapp() {
-    await refreshStatus();
-    const s = state.status?.wa || {};
-    $('#wa-detail').innerHTML = s.status === 'ready'
-      ? `<div class="banner ok">Connected as ${esc(s.name || '')} ${s.phone ? '(+' + esc(s.phone) + ')' : ''}. You're all set.</div>`
-      : `<div class="banner warn">Status: ${esc(s.status)}${s.error ? ' — ' + esc(s.error) : ''}</div>`;
+  // ============ WhatsApp (admin) ============
+  async function renderWhatsapp() {
+    await Promise.all([refreshStatus(), loadGroups()]);
+    const s = S.status.wa;
+    const ready = s.status === 'ready';
+    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp gateway is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? '+' + esc(s.phone) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
+    $('#wa-connect').classList.toggle('hidden', ready);
+    $('#wa-logout').classList.toggle('hidden', !ready);
     $('#qr-wrap').classList.add('hidden');
-    if (s.status !== 'ready') pollQr();
+    if (!ready && s.status === 'qr_ready') pollQr();
+    $('#keywords-form').keywords.value = (S.sync?.keywords || []).join(', ');
+    renderSyncDetail();
   }
-  async function pollQr() {
-    clearInterval(state.qrTimer);
+  function renderSyncDetail() {
+    const s = S.sync; if (!s) return;
+    $('#sync-detail').textContent = s.running ? 'Syncing now. Large accounts can take a minute or two.' : s.error ? `Last sync failed: ${s.error}` :
+      s.finishedAt ? `${plural(s.saved, 'group')} shown to your team. Last synced ${ago(s.finishedAt)}${s.total ? `, out of ${s.total} groups on this number` : ''}.` : 'Not synced yet. It runs once automatically after WhatsApp connects.';
+    $('#wa-sync').disabled = !!s.running;
+  }
+  function pollQr() {
+    clearInterval(S.qrTimer);
     const tick = async () => {
-      if (state.tab !== 'whatsapp') { clearInterval(state.qrTimer); return; }
+      if (S.view !== 'whatsapp') { clearInterval(S.qrTimer); return; }
       try {
         const r = await api('wa/qr');
         if (r.qrCode) { $('#qr-img').src = r.qrCode; $('#qr-wrap').classList.remove('hidden'); }
-        else $('#qr-wrap').classList.add('hidden');
         await refreshStatus();
-        if (state.status.wa.status === 'ready') { clearInterval(state.qrTimer); toast('WhatsApp connected ✓. Groups sync automatically in a minute or two.'); loadWhatsapp(); loadGroups(); }
+        if (S.status.wa.status === 'ready') { clearInterval(S.qrTimer); toast('WhatsApp connected. Groups sync in a minute or two.'); renderWhatsapp(); }
       } catch { /* keep polling */ }
     };
-    tick(); state.qrTimer = setInterval(tick, 4000);
+    tick(); S.qrTimer = setInterval(tick, 4000);
   }
   $('#wa-connect').addEventListener('click', async () => {
-    try { await api('wa/start', { method: 'POST' }); toast('Starting WhatsApp… the QR appears in a few seconds'); pollQr(); } catch (err) { toast(err.message, true); }
+    try { await api('wa/start', { method: 'POST' }); toast('Starting WhatsApp. The QR code appears in a few seconds.'); pollQr(); } catch (err) { toast(err.message, true); }
   });
   $('#wa-logout').addEventListener('click', async () => {
-    if (!await confirmDialog('Unlink WhatsApp?', '<p>The server is removed from this phone\'s Linked devices. Nothing sends until someone scans the QR again.</p>', 'Unlink', true)) return;
-    try { await api('wa/logout', { method: 'POST' }); toast('Unlinked'); loadWhatsapp(); } catch (err) { toast(err.message, true); }
+    if (!await dialog({ title: 'Unlink this number?', html: "<p>WA Box is removed from the phone's linked devices. Nothing sends until someone scans the QR code again.</p>", ok: 'Unlink', danger: true })) return;
+    try { await api('wa/logout', { method: 'POST' }); toast('Number unlinked'); renderWhatsapp(); } catch (err) { toast(err.message, true); }
+  });
+  $('#wa-sync').addEventListener('click', syncGroups);
+  $('#keywords-form').addEventListener('submit', async e => {
+    e.preventDefault(); $('#keywords-error').textContent = '';
+    try { await api('groups/keywords', { method: 'PUT', body: { keywords: e.target.keywords.value } }); toast('Keywords saved'); await syncGroups(); }
+    catch (err) { $('#keywords-error').textContent = err.message; }
   });
 
-  // ---------- team (admin) ----------
-  async function loadUsers() {
+  // ============ Team (admin) ============
+  async function renderTeam() {
     try {
       const { users } = await api('users');
-      $('#users-table tbody').innerHTML = users.map(u => `<tr data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.role)}</td>
-        <td>${u.disabled ? '<span class="badge cancelled">Disabled</span>' : u.must_change ? '<span class="badge">Must set password</span>' : '<span class="badge done">Active</span>'}</td>
-        <td class="row end"><button class="btn ghost small" data-act="reset">Reset password</button>
-        <button class="btn ghost small ${u.disabled ? '' : 'danger'}" data-act="${u.disabled ? 'enable' : 'disable'}">${u.disabled ? 'Enable' : 'Disable'}</button></td></tr>`).join('');
+      $('#users-table tbody').innerHTML = users.map(u => `<tr data-id="${u.id}"><td><b>${esc(u.username)}</b>${u.username === S.me.username ? ' <span class="hint">(you)</span>' : ''}</td><td>${u.role === 'admin' ? 'Admin' : 'Member'}</td>
+        <td>${u.disabled ? '<span class="pill cancelled">Disabled</span>' : u.must_change ? '<span class="pill scheduled">Hasn\'t signed in yet</span>' : '<span class="pill done">Active</span>'}</td>
+        <td class="actions"><button class="btn btn-ghost btn-sm" data-act="reset" type="button">Reset password</button>
+        ${u.username === S.me.username ? '' : `<button class="btn ${u.disabled ? 'btn-ghost' : 'btn-danger-ghost'} btn-sm" data-act="${u.disabled ? 'enable' : 'disable'}" type="button">${u.disabled ? 'Enable' : 'Disable'}</button>`}</td></tr>`).join('');
     } catch (err) { toast(err.message, true); }
   }
   $('#users-table').addEventListener('click', async e => {
@@ -403,53 +760,44 @@
     const id = b.closest('tr').dataset.id;
     try {
       if (b.dataset.act === 'reset') {
-        if (!await confirmDialog('Reset password', '<label>New temporary password (10+ characters)<input id="reset-pw" minlength="10" autocomplete="off"></label>', 'Reset')) return;
-        await api(`users/${id}/reset`, { method: 'POST', body: { password: $('#reset-pw').value } }); toast('Password reset; they must change it at next login');
+        if (!await dialog({ title: 'Reset password', ok: 'Reset password', html: '<p>They\'ll be signed out and asked to choose a new password next time.</p><label class="fld"><span>Temporary password</span><input id="reset-pw" minlength="10" autocomplete="off"><small>At least 10 characters. Share it privately.</small></label>', onOpen: () => $('#reset-pw').focus() })) return;
+        await api(`users/${id}/reset`, { method: 'POST', body: { password: $('#reset-pw').value } }); toast('Password reset');
       } else {
-        await api(`users/${id}/disable`, { method: 'POST', body: { disabled: b.dataset.act === 'disable' } }); toast('Updated');
+        const dis = b.dataset.act === 'disable';
+        if (dis && !await dialog({ title: 'Disable this person?', html: "<p>They're signed out right away and can't sign in. Messages they scheduled still go out.</p>", ok: 'Disable', danger: true })) return;
+        await api(`users/${id}/disable`, { method: 'POST', body: { disabled: dis } }); toast(dis ? 'Disabled' : 'Enabled');
       }
-      loadUsers();
+      renderTeam();
     } catch (err) { toast(err.message, true); }
   });
   $('#user-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    $('#user-error').textContent = '';
-    try { await api('users', { method: 'POST', body: Object.fromEntries(f) }); e.target.reset(); toast('Person added'); loadUsers(); }
+    e.preventDefault(); $('#user-error').textContent = '';
+    try { await api('users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); toast('Person added'); renderTeam(); }
     catch (err) { $('#user-error').textContent = err.message; }
   });
 
-  // ---------- settings (admin) ----------
-  async function loadSettings() {
+  // ============ Settings (admin) ============
+  async function renderSettings() {
     await refreshStatus();
-    const s = state.status, f = $('#settings-form');
+    const s = S.status, f = $('#settings-form');
     f.dryRun.checked = s.dryRun; f.paused.checked = s.paused; f.dailyCap.value = s.dailyCap; f.maxLateMin.value = s.maxLateMin;
-    try { const g = await api('groups'); $('#keywords-form').keywords.value = g.sync.keywords.join(', '); } catch { /* ignore */ }
     try {
       const { audit } = await api('audit');
-      $('#audit-table tbody').innerHTML = audit.map(a => `<tr><td>${esc(fmt(a.at))}</td><td>${esc(a.actor)}</td><td>${esc(a.action.replace(/_/g, ' '))} <span class="muted">${esc(a.detail)}</span></td></tr>`).join('');
+      const words = { login: 'Signed in', login_failed: 'Failed sign-in', job_created: 'Scheduled a message', job_edited: 'Edited a message', job_cancelled: 'Cancelled a message',
+        job_send_now: 'Started a message early', job_missed: 'A message was missed', daily_cap: 'Daily limit reached', wa_start: 'Started WhatsApp', wa_logout: 'Unlinked WhatsApp',
+        dry_run: 'Changed practice mode', paused: 'Paused or resumed sending', user_created: 'Added a person', user_reset: 'Reset a password', user_disabled: 'Disabled a person',
+        user_enabled: 'Enabled a person', groups_synced: 'Synced groups', group_keywords: 'Changed group keywords', list_saved: 'Saved a group list', list_deleted: 'Deleted a group list',
+        password_changed: 'Changed their password', seed_admin: 'Created the first admin', admin_renamed: 'Renamed the admin account' };
+      $('#audit-table tbody').innerHTML = audit.map(a => `<tr><td class="when">${esc(whenLabel(a.at))}</td><td>${esc(a.actor)}</td><td>${esc(words[a.action] || a.action.replace(/_/g, ' '))} <span class="hint">${esc(a.detail)}</span></td></tr>`).join('');
     } catch { /* ignore */ }
   }
   $('#settings-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = e.target;
-    $('#settings-error').textContent = '';
-    if (!f.dryRun.checked && state.status.dryRun &&
-        !await confirmDialog('Go live?', '<p>Turning dry run off means scheduled jobs will <b>really send</b> to WhatsApp groups.</p>', 'Go live')) return;
+    e.preventDefault(); const f = e.target; $('#settings-error').textContent = '';
+    if (!f.dryRun.checked && S.status.dryRun && !await dialog({ title: 'Go live?', html: '<p>Scheduled messages will really be sent to your WhatsApp groups from now on.</p>', ok: 'Go live' })) return;
     try {
       await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value) } });
-      toast('Settings saved'); loadSettings();
+      toast('Settings saved'); renderSettings();
     } catch (err) { $('#settings-error').textContent = err.message; }
-  });
-
-  $('#keywords-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    $('#keywords-error').textContent = '';
-    try {
-      const r = await api('groups/keywords', { method: 'PUT', body: { keywords: e.target.keywords.value } });
-      e.target.keywords.value = r.keywords.join(', ');
-      if (await confirmDialog('Keywords saved', `<p>Sync groups from WhatsApp now so the list matches ${r.keywords.length ? esc(r.keywords.join(', ')) : 'all groups'}?</p>`, 'Sync now')) syncGroups();
-    } catch (err) { $('#keywords-error').textContent = err.message; }
   });
 
   boot();
