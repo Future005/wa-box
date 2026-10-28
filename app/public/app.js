@@ -195,7 +195,7 @@
     const s = S.status, wa = s.wa.status;
     const conn = { ready: ['ok', 'WhatsApp connected'], qr_ready: ['warn', 'Waiting for QR scan'], authenticating: ['warn', 'Connecting…'],
       initializing: ['warn', 'Starting WhatsApp…'], created: ['warn', 'Not connected'], disconnected: ['bad', 'Disconnected'],
-      failed: ['bad', 'Connection failed'], action_required: ['bad', 'Needs attention'], unreachable: ['bad', 'Gateway offline'], unknown: ['warn', 'Checking…'] }[wa] || ['warn', wa];
+      failed: ['bad', 'Connection failed'], action_required: ['bad', 'Needs attention'], unreachable: ['bad', 'Engine offline'], unknown: ['warn', 'Checking…'] }[wa] || ['warn', wa];
     $('#conn-dot').className = 'dot ' + conn[0];
     $('#conn-title').textContent = conn[1];
     $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, s.wa.phone ? '+' + s.wa.phone : ''].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
