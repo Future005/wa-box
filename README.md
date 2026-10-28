@@ -34,7 +34,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/hero.gif" alt="Before: pasting the same message into 15 WhatsApp groups. After: write it once in WA Box, and it goes to each group with natural gaps." width="900"><br>
+  <img src="docs/media/hero.gif" alt="Busy at 9 AM with reminders for different groups piling up; in WA Box each message is scheduled once, repeats weekly, and goes out on time with natural gaps" width="900"><br>
   <sub><a href="docs/media/hero.mp4">Watch in HD</a></sub>
 </p>
 
@@ -43,8 +43,9 @@
 ## Why WA Box
 
 If you run cohorts, communities or classes on WhatsApp, you send the same message to 5, 15, 30
-groups, at the same times every week, often early on a Saturday. WhatsApp has no scheduler, and
-blasting 15 groups in 15 seconds from a script is a good way to get a number flagged.
+groups, at the same times every week, often early on a Saturday. Different groups need different messages,
+some go out every week, and when you're on a call at 9 AM, nobody sends them. WhatsApp has no
+scheduler, and blasting 15 groups in 15 seconds from a script is a good way to get a number flagged.
 
 WA Box is a small web app your whole team can use:
 
@@ -70,6 +71,8 @@ WA Box is a small web app your whole team can use:
 
 **Writing**
 
+<img src="docs/media/per-group.gif" alt="One message to a list; each group gets its own name and the right day filled in" width="640">
+
 <img src="docs/media/date-check.gif" alt="The date check notices the message says today and Saturday but is scheduled for Friday, and fixes it in one click" width="640">
 
 - WhatsApp formatting (`*bold*`, `_italic_`, `~strike~`, ```` ```mono``` ````, lists, quotes) with toolbar and shortcuts (Ctrl/⌘ + B, I, Enter).
@@ -81,6 +84,9 @@ WA Box is a small web app your whole team can use:
 - "Send a test to my WhatsApp" before it goes out.
 
 **Scheduling**
+
+<img src="docs/media/repeat.gif" alt="Picking a list fills in its usual time; repeat every Saturday and Sunday fills the coming weeks by itself" width="640">
+
 - Any date and time (India time), or every week on chosen days.
 - Lists remember when you usually send them ("usually Saturday 09:30, gentle pacing").
 - Quiet-hours warning, so nothing lands at 2 AM by accident.
@@ -100,6 +106,9 @@ WA Box is a small web app your whole team can use:
 - Practice mode: everything runs on schedule, nothing reaches WhatsApp.
 
 **Knowing what happened**
+
+<img src="docs/media/alerts.gif" alt="The team channel gets a morning check-in, a done note, and a warning when WhatsApp needs attention" width="640">
+
 - Today page: what's sending right now, live, with what's next.
 - ✓ sent, ✓✓ delivered, blue ✓✓ read, per group.
 - Alerts to Slack, Google Chat, Discord or WhatsApp numbers. A morning check-in (with a week preview on Mondays). A short "done" note after each message.
@@ -149,6 +158,8 @@ You need **Docker**. Pick one:
 ### A. On your own computer (5 minutes)
 
 Good for trying it out. Runs at `http://localhost:3000`, only on your computer, in practice mode.
+
+<img src="docs/media/install.gif" alt="Running sh scripts/setup.sh: it makes the secrets, builds, runs the safety tests and prints the address and username" width="640">
 
 **Mac / Linux**
 

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: one command sets WA Box up on your own computer. -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .term { left: 60px; top: 140px; width: 1080px; height: 450px; background: #0e1f1d; border-color: #0e1f1d; overflow: hidden; }
+  .bar { height: 46px; display: flex; align-items: center; gap: 9px; padding: 0 18px; background: #16302d; }
+  .bar i { width: 13px; height: 13px; border-radius: 50%; background: #3b5653; }
+  .bar span { margin-left: 12px; color: #9fb5b0; font: 600 16px ui-monospace, Menlo, monospace; }
+  .body { padding: 22px 26px; font: 500 20px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d6e5e2; }
+  .ln { white-space: pre; opacity: 0; }
+  .p { color: var(--mint); }
+  .c { color: #fff; }
+  .dim { color: #8aa29d; }
+  .ok { color: #7ee2a8; font-weight: 700; }
+  .cy { color: #7fe0d3; }
+  .typed span { opacity: 0; }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="install" data-start="0" data-duration="7.5" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>Running on your computer in one command.</b></div>
+  <div class="card term">
+    <div class="bar"><i></i><i></i><i></i><span>~/wabox</span></div>
+    <div class="body">
+      <div class="ln l0" style="opacity:1"><span class="p">$ </span><span class="c typed" id="cmd"></span></div>
+      <div class="ln l1"><span class="cy">›</span> Making .env with a fresh engine key</div>
+      <div class="ln l2"><span class="cy">›</span> Building and starting <span class="dim">(runs all 74 safety tests)</span></div>
+      <div class="ln l3"><span class="cy">›</span> Waiting for WA Box to answer on http://localhost:3000</div>
+      <div class="ln l4"> </div>
+      <div class="ln l5"><span class="ok">✓ WA Box is running</span></div>
+      <div class="ln l6">  Open:      <span class="c">http://localhost:3000</span></div>
+      <div class="ln l7">  Username:  <span class="c">you@example.com</span></div>
+      <div class="ln l8"><span class="dim">  Starts in practice mode: nothing reaches WhatsApp until you press "Go live".</span></div>
+    </div>
+  </div>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const cmd = document.getElementById('cmd');
+  const chars = [...'sh scripts/setup.sh'].map(ch => { const s = document.createElement('span'); s.textContent = ch; cmd.appendChild(s); return s; });
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.term', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  chars.forEach((c, i) => tl.set(c, { opacity: 1 }, 0.6 + i * 0.05));
+  const t0 = 0.6 + chars.length * 0.05 + 0.3;
+  [[1, 0], [2, 0.5], [3, 1.4], [4, 2.3], [5, 2.35], [6, 2.55], [7, 2.7], [8, 2.9]].forEach(([n, d]) => tl.fromTo('.l' + n, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.2 }, t0 + d));
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 7.2);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['install'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>

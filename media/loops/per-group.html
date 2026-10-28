@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: one message, each group gets its own name and the right day ({group}, {day}). -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .ed { left: 60px; top: 160px; width: 560px; padding: 26px 28px; display: grid; gap: 16px; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip { height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--line-2); display: inline-flex; align-items: center; gap: 8px; font-size: 19px; font-weight: 650; }
+  .chip.on { background: var(--teal-wash); border: 2px solid var(--teal); }
+  .chip small { color: var(--ink-3); font-weight: 750; font-size: 16px; }
+  .editor { border: 2px solid var(--teal-2); border-radius: 16px; padding: 16px 18px; font-size: 22px; line-height: 1.5; }
+  .ph { background: var(--teal-wash); color: var(--teal); border-radius: 6px; padding: 0 5px; font-weight: 700; }
+  .phone { position: absolute; left: 700px; top: 125px; width: 420px; height: 480px; border-radius: 48px; background: #0e1f1d; padding: 11px; box-shadow: 0 40px 80px -40px rgba(14,31,29,.45); }
+  .screen { width: 100%; height: 100%; border-radius: 38px; overflow: hidden; background: var(--chat); position: relative; }
+  .bar { height: 104px; background: var(--teal); color: #fff; padding: 44px 22px 0; position: relative; }
+  .gname { position: absolute; left: 22px; right: 22px; top: 48px; display: flex; gap: 12px; align-items: center; opacity: 0; }
+  .gname .av { width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,.22); display: grid; place-items: center; font-weight: 800; font-size: 18px; }
+  .gname b { font-size: 21px; font-weight: 700; }
+  .bubble { position: absolute; right: 16px; top: 128px; width: 330px; background: var(--bubble); border-radius: 16px 5px 16px 16px; padding: 14px 16px 10px; font-size: 21px; line-height: 1.4; color: #111b21; opacity: 0; }
+  .bubble mark { background: #fff3b0; border-radius: 4px; padding: 0 3px; }
+  .meta { text-align: right; font-size: 14px; color: #667781; margin-top: 4px; }
+  .nav { position: absolute; left: 700px; top: 612px; width: 420px; text-align: center; font-size: 17px; font-weight: 700; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="per-group" data-start="0" data-duration="7" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>One message. Every group gets its own name.</b></div>
+  <div class="card ed">
+    <div><div class="lbl">Groups</div><div class="chips"><span class="chip on">Weekend cohorts <small>15</small></span><span class="chip">Thu–Fri batch <small>5</small></span></div></div>
+    <div><div class="lbl">Message</div><div class="editor">Hi <span class="ph">{group}</span> 👋<br><b>{day} class</b> at 11 AM.<br>The link is pinned above.</div></div>
+  </div>
+  <div class="phone"><div class="screen">
+    <div class="bar">
+      <div class="gname g1"><span class="av">1</span><b>Weekend Cohort 1</b></div>
+      <div class="gname g2"><span class="av">2</span><b>Weekend Cohort 2</b></div>
+      <div class="gname g3"><span class="av">3</span><b>Weekend Cohort 3</b></div>
+    </div>
+    <div class="bubble b1">Hi <mark>Weekend Cohort 1</mark> 👋<br><b>Saturday class</b> at 11 AM.<br>The link is pinned above.<div class="meta">9:00 ✓✓</div></div>
+    <div class="bubble b2">Hi <mark>Weekend Cohort 2</mark> 👋<br><b>Saturday class</b> at 11 AM.<br>The link is pinned above.<div class="meta">9:01 ✓✓</div></div>
+    <div class="bubble b3">Hi <mark>Weekend Cohort 3</mark> 👋<br><b>Saturday class</b> at 11 AM.<br>The link is pinned above.<div class="meta">9:02 ✓✓</div></div>
+  </div></div>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.ed', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  tl.from('.phone', { x: 50, opacity: 0, duration: 0.5 }, 0.2);
+  [0.8, 2.4, 4.0].forEach((t, i) => {
+    const n = i + 1;
+    if (i) { tl.to('.g' + i, { opacity: 0, duration: 0.15 }, t - 0.15); tl.to('.b' + i, { opacity: 0, x: -30, duration: 0.2 }, t - 0.15); }
+    tl.fromTo('.g' + n, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.25 }, t);
+    tl.fromTo('.b' + n, { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: 0.35 }, t + 0.05);
+  });
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 6.7);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['per-group'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: a list remembers its usual time; repeat every Sat & Sun; the weeks fill in by themselves. -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .ed { left: 60px; top: 150px; width: 540px; padding: 24px 26px; display: grid; gap: 18px; }
+  .hint { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--teal-wash); color: var(--teal); font-size: 18px; font-weight: 700; }
+  .hint .use { margin-left: auto; height: 34px; padding: 0 14px; border-radius: 17px; background: var(--teal); color: #fff; display: inline-flex; align-items: center; font-size: 16px; font-weight: 800; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .stack { position: relative; display: inline-block; width: 120px; height: 26px; }
+  .stack span { position: absolute; left: 0; top: 0; white-space: nowrap; }
+  .sw { width: 52px; height: 30px; border-radius: 15px; background: var(--line-2); position: relative; }
+  .sw i { position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .swon { position: absolute; inset: 0; border-radius: 15px; background: var(--teal); opacity: 0; }
+  .days { display: flex; gap: 8px; }
+  .d { width: 50px; height: 40px; border-radius: 10px; border: 1px solid var(--line-2); display: grid; place-items: center; font-size: 16px; font-weight: 750; color: var(--ink-2); position: relative; }
+  .d .on { position: absolute; inset: -1px; border-radius: 10px; background: var(--teal); opacity: 0; }
+  .d span { position: relative; }
+  .weeks { left: 640px; top: 150px; width: 500px; padding: 22px 24px; }
+  .weeks h4 { font-size: 21px; font-weight: 800; margin-bottom: 14px; }
+  .wk { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); font-size: 17px; }
+  .wk .lab { color: var(--ink-3); font-weight: 700; }
+  .slot { height: 50px; border-radius: 12px; border: 1px dashed var(--line-2); display: flex; align-items: center; gap: 8px; padding: 0 12px; font-weight: 700; font-size: 16px; position: relative; }
+  .slot .fill { position: absolute; inset: -1px; border-radius: 12px; background: var(--teal-wash); border: 1px solid #bfe4de; opacity: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+  .slot .fill b { color: var(--teal); }
+  .chip-done { color: var(--green); }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="repeat" data-start="0" data-duration="7" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>Set it once. It repeats every week.</b></div>
+  <div class="card ed">
+    <div class="hint" id="hint">⏱ Weekend cohorts usually go Sat 09:00, gentle pacing <span class="use" id="use">Use</span></div>
+    <div><div class="lbl">When</div><div class="row"><span class="field">📅 <span class="stack"><span id="d1">Today</span><span id="d2" style="opacity:0">Sat, 31 Oct</span></span></span><span class="field">🕘 <span class="stack" style="width:70px"><span id="t1">12:00</span><span id="t2" style="opacity:0">09:00</span></span></span></div></div>
+    <div><div class="row"><span class="sw"><span class="swon" id="swon"></span><i id="knob"></i></span><b style="font-size:20px">Repeat every week</b></div></div>
+    <div class="days" id="days"><span class="d"><span>Mon</span></span><span class="d"><span>Tue</span></span><span class="d"><span>Wed</span></span><span class="d"><span>Thu</span></span><span class="d"><span>Fri</span></span><span class="d" id="sat"><span class="on"></span><span>Sat</span></span><span class="d" id="sun"><span class="on"></span><span>Sun</span></span></div>
+  </div>
+  <div class="card weeks">
+    <h4>Class reminder · Weekend cohorts</h4>
+    <div class="wk"><span class="lab">This week</span><span class="slot"><span class="fill f1"><b>Sat</b> 09:00</span></span><span class="slot"><span class="fill f2"><b>Sun</b> 09:00</span></span></div>
+    <div class="wk"><span class="lab">Next week</span><span class="slot"><span class="fill f3"><b>Sat</b> 09:00</span></span><span class="slot"><span class="fill f4"><b>Sun</b> 09:00</span></span></div>
+    <div class="wk"><span class="lab">After that</span><span class="slot"><span class="fill f5"><b>Sat</b> 09:00</span></span><span class="slot"><span class="fill f6"><b>Sun</b> 09:00</span></span></div>
+  </div>
+  <svg class="cursor" id="cur" viewBox="0 0 24 24"><path d="M4 2l15 9.5-6.6 1.4L9.6 20z" fill="#0e1f1d" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  const click = (sel, t) => { tl.to('#cur', { scale: 0.85, duration: 0.06, yoyo: true, repeat: 1 }, t); if (sel) tl.to(sel, { scale: 0.94, duration: 0.06, yoyo: true, repeat: 1 }, t); };
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.ed', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  tl.from('.weeks', { x: 40, opacity: 0, duration: 0.5 }, 0.25);
+  tl.fromTo('#cur', { x: 1150, y: 620, opacity: 0 }, { x: 545, y: 178, opacity: 1, duration: 0.6, ease: 'power2.inOut' }, 0.6);
+  click('#use', 1.25);
+  tl.to('#d1', { opacity: 0, y: -14, duration: 0.2 }, 1.35); tl.fromTo('#d2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.25 }, 1.4);
+  tl.to('#t1', { opacity: 0, y: -14, duration: 0.2 }, 1.35); tl.fromTo('#t2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.25 }, 1.4);
+  tl.to('#hint', { opacity: 0.55, duration: 0.3 }, 1.6);
+  tl.to('#cur', { x: 108, y: 374, duration: 0.45, ease: 'power2.inOut' }, 1.7);
+  click(null, 2.2);
+  tl.to('#swon', { opacity: 1, duration: 0.15 }, 2.25); tl.to('#knob', { x: 22, duration: 0.2 }, 2.25);
+  tl.from('#days', { opacity: 0, y: -8, duration: 0.3 }, 2.35);
+  tl.to('#cur', { x: 396, y: 428, duration: 0.35, ease: 'power2.inOut' }, 2.55);
+  click('#sat', 2.95); tl.to('#sat .on', { opacity: 1, duration: 0.12 }, 2.98); tl.to('#sat', { color: '#fff', duration: 0.12 }, 2.98);
+  tl.to('#cur', { x: 454, y: 428, duration: 0.25, ease: 'power2.inOut' }, 3.1);
+  click('#sun', 3.4); tl.to('#sun .on', { opacity: 1, duration: 0.12 }, 3.43); tl.to('#sun', { color: '#fff', duration: 0.12 }, 3.43);
+  tl.to('#cur', { opacity: 0, duration: 0.3 }, 3.7);
+  ['.f1', '.f2', '.f3', '.f4', '.f5', '.f6'].forEach((f, i) => tl.fromTo(f, { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'back.out(1.6)' }, 3.6 + i * 0.22));
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 6.7);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['repeat'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>

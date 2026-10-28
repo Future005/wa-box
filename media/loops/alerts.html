@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: the team channel gets a morning check-in, a "done" note, and a warning when something needs a person. -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .chan { left: 60px; top: 140px; width: 700px; height: 400px; overflow: hidden; }
+  .ch-h { height: 64px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 22px; font-size: 22px; font-weight: 800; }
+  .ch-h small { font-size: 16px; color: var(--ink-3); font-weight: 600; margin-left: 6px; }
+  .msgs { padding: 14px 22px; display: grid; gap: 14px; }
+  .msg { display: grid; grid-template-columns: 48px 1fr; gap: 12px; opacity: 0; }
+  .msg img { width: 44px; height: 44px; border-radius: 10px; }
+  .who { font-size: 17px; font-weight: 800; }
+  .who small { color: var(--ink-3); font-weight: 600; margin-left: 8px; font-size: 15px; }
+  .txt { font-size: 19px; line-height: 1.45; color: var(--ink); margin-top: 2px; }
+  .txt.warn { background: var(--amber-wash); color: var(--amber); border-radius: 10px; padding: 8px 12px; font-weight: 650; }
+  .side { left: 800px; top: 140px; width: 340px; padding: 22px; display: grid; gap: 12px; }
+  .side h4 { font-size: 20px; font-weight: 800; }
+  .opt { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 650; color: var(--ink-2); }
+  .opt i { width: 22px; height: 22px; border-radius: 6px; background: var(--teal); color: #fff; font-style: normal; display: grid; place-items: center; font-size: 14px; font-weight: 800; }
+  .ping { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--red); left: 300px; top: 160px; opacity: 0; }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="alerts" data-start="0" data-duration="7" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>Nothing fails quietly. Your team always knows.</b></div>
+  <div class="card chan">
+    <div class="ch-h"># class-ops <small>Slack · Google Chat · Discord · WhatsApp</small></div>
+    <div class="msgs">
+      <div class="msg m1"><img src="../assets/mark.svg" alt=""><div><div class="who">WA Box <small>8:30 AM</small></div><div class="txt">☀️ Morning check-in: 3 messages to 23 groups today. WhatsApp connected.</div></div></div>
+      <div class="msg m2"><img src="../assets/mark.svg" alt=""><div><div class="who">WA Box <small>9:18 AM</small></div><div class="txt">✅ “Class reminder”: 15/15 groups. Delivery ticks update in WA Box.</div></div></div>
+      <div class="msg m3"><img src="../assets/mark.svg" alt=""><div><div class="who">WA Box <small>6:02 PM</small></div><div class="txt warn">⚠️ WhatsApp got logged out. Nothing is being sent; 1 message is waiting. Scan the QR code to reconnect.</div></div></div>
+    </div>
+  </div>
+  <div class="card side">
+    <h4>Alerts go to</h4>
+    <div class="opt"><i>✓</i>Your team chat (webhook)</div>
+    <div class="opt"><i>✓</i>WhatsApp numbers you choose</div>
+    <div class="opt"><i>✓</i>Morning check-in</div>
+    <div class="opt"><i>✓</i>“Done” notes after each send</div>
+    <div class="opt"><i>✓</i>Uptime monitor endpoint</div>
+  </div>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.chan', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  tl.from('.side', { x: 40, opacity: 0, duration: 0.5 }, 0.25);
+  tl.from('.opt', { opacity: 0, x: -10, duration: 0.25, stagger: 0.12 }, 0.6);
+  [['.m1', 1.0], ['.m2', 2.3], ['.m3', 3.6]].forEach(([m, t]) => tl.fromTo(m, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.4, ease: 'back.out(1.4)' }, t));
+  tl.to('.m3 .warn', { x: -5, duration: 0.05, repeat: 5, yoyo: true, ease: 'none' }, 4.0);
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 6.7);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['alerts'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>
