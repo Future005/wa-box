@@ -21,6 +21,7 @@ const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db'
 const wa = require('./wa');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');
+const hooks = require('./hooks');
 const { renderMessage } = require('./render');
 // The text a given group actually receives (placeholders filled in).
 const textFor = (job, group) => renderMessage(job.message, { groupName: group.name, at: job.run_at });
@@ -132,6 +133,16 @@ function upsertSend(job, group, fields) {
     ON CONFLICT(job_id,occurrence,group_id) DO UPDATE SET status=excluded.status, attempts=excluded.attempts, error=excluded.error,
     sent_at=excluded.sent_at, day_key=excluded.day_key, msg_hash=excluded.msg_hash, attempt_at=excluded.attempt_at,
     wa_message_id=excluded.wa_message_id, override=excluded.override, verified=excluded.verified`).run(row);
+  if (PROBLEM_STATES.includes(row.status) && cur.status !== row.status) {
+    hooks.emit('group.failed', { message: hookMessage(job), group: { id: group.id, name: group.name }, status: row.status, error: row.error });
+  }
+}
+const PROBLEM_STATES = ['failed', 'missed', 'unconfirmed', 'blocked_duplicate', 'skipped'];
+const iso = ms => (ms ? new Date(ms).toISOString() : null);
+/** The message as webhooks (and the public API) describe it. */
+function hookMessage(job) {
+  return { id: job.id, title: job.title || null, preview: firstLine(job.message), runAt: iso(job.run_at),
+    repeat: JSON.parse(job.repeat_days || '[]').map(d => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][d]), createdBy: job.created_by };
 }
 
 async function interruptibleSleep(ms, jobId, runAt) {
@@ -195,6 +206,9 @@ function finishOccurrence(job, note = '') {
   job = getJob(job.id);
   const days = JSON.parse(job.repeat_days || '[]');
   const problems = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('failed','missed','unconfirmed','blocked_duplicate','skipped')").get(job.id, job.run_at).n;
+  hooks.emit('message.finished', { message: hookMessage(job), status: problems ? 'done_with_errors' : 'done',
+    groups: db.prepare('SELECT group_id id, group_name name, status, sent_at, error FROM sends WHERE job_id=? AND occurrence=? ORDER BY id').all(job.id, job.run_at)
+      .map(g => ({ id: g.id, name: g.name, status: g.status, sentAt: iso(g.sent_at), error: g.error })) });
   const sentN = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run')").get(job.id, job.run_at).n;
   const total = JSON.parse(job.groups_json).length;
   const practice = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status='dry_run'").get(job.id, job.run_at).n > 0;
@@ -299,6 +313,9 @@ async function runJob(job) {
   const cfg = settings();
   state.runningJobId = job.id;
   db.prepare("UPDATE jobs SET status='running', note='', updated_at=? WHERE id=?").run(Date.now(), job.id);
+  if (!db.prepare('SELECT 1 FROM sends WHERE job_id=? AND occurrence=? LIMIT 1').get(job.id, job.run_at)) {
+    hooks.emit('message.started', { message: hookMessage(job), groups: JSON.parse(job.groups_json), practiceMode: cfg.dryRun });
+  }
   logEvent('info', 'job', `Started: ${JSON.parse(job.groups_json).length} groups${cfg.dryRun ? ' (practice mode)' : ''}`, { jobId: job.id });
   const groups = JSON.parse(job.groups_json);
   const gapMin = Math.max(HARD_MIN_GAP_S, job.gap_min);
@@ -491,6 +508,7 @@ function purgeMedia(now = Date.now()) {
 
 let timer = null;
 function startLoop() {
+  hooks.start();
   purgeMedia();
   setInterval(() => { try { purgeMedia(); } catch (e) { logEvent('warn', 'cleanup', e.message); } }, 3600 * 1000).unref?.();
   logEvent('info', 'scheduler', `Started (instance ${OWNER})`);

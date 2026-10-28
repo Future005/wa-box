@@ -13,7 +13,7 @@ const KEY = 'k'.repeat(64);
 const PORT = 27850 + Math.floor(Math.random() * 100);
 Object.assign(process.env, {
   DATA_DIR: DATA, WABOX_TEST_FAST: '1', WA_ENGINE_URL: `http://127.0.0.1:${PORT}`, WA_ENGINE_KEY: KEY,
-  WABOX_SEND_TIMEOUT_MS: '300', DRY_RUN: 'false',
+  WABOX_SEND_TIMEOUT_MS: '300', DRY_RUN: 'false', WABOX_ALLOW_HTTP_HOOKS: '1',
 });
 
 // ---------- fake engine (same API as engine/src/server.js) ----------
@@ -85,7 +85,7 @@ before(async () => {
 });
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
-  for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists']) db.exec(`DELETE FROM ${t}`);
+  for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
   Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [] });
   setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
@@ -446,4 +446,23 @@ test('when a message finishes cleanly, a short "done" note goes to the alert cha
   await runUntilIdle();
   await new Promise(r => setTimeout(r, 100));
   assert.ok(gw.hooks.some(h => /Weekend reminder 🎯.*2\/2 groups/.test(h.text)), JSON.stringify(gw.hooks));
+});
+
+test('webhooks: message.started, group.failed and message.finished go out, signed, for a real send', async () => {
+  const hooks = require('../src/hooks');
+  const h = hooks.add({ url: `http://127.0.0.1:${PORT}/hook` }, 'test');
+  addGroups(1, 2);
+  gw.behaviour[G(2).id] = ['reject400'];
+  const id = addJob({ groups: [1, 2] });
+  await runUntilIdle();
+  for (let i = 0; i < 50 && gw.hooks.filter(x => x.event).length < 3; i++) await new Promise(r => setTimeout(r, 20));
+  const evs = gw.hooks.filter(x => x.event);
+  assert.deepEqual(evs.map(e => e.event), ['message.started', 'group.failed', 'message.finished']);
+  assert.equal(evs[1].data.group.id, G(2).id);
+  assert.equal(evs[1].data.status, 'failed');
+  const fin = evs[2].data;
+  assert.equal(fin.message.id, Number(id));
+  assert.equal(fin.status, 'done_with_errors');
+  assert.deepEqual(fin.groups.map(g => g.status), ['sent', 'failed']);
+  assert.ok(db.prepare("SELECT COUNT(*) n FROM hook_deliveries WHERE status='ok' AND hook_id=?").get(h.id).n === 3);
 });

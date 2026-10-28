@@ -61,6 +61,7 @@
           <p class="nav-label">Workspace</p>
           <a href="#whatsapp" data-view="whatsapp"><svg viewBox="0 0 24 24"><path d="M5 19l1.2-3.6A7.5 7.5 0 1 1 9 18.3z"/></svg>WhatsApp &amp; groups</a>
           <a href="#team" data-view="team"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>Team</a>
+          <a href="#api" data-view="api"><svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/></svg>API &amp; webhooks</a>
           <a href="#system" data-view="system"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>System &amp; logs<span class="nav-count warn" id="count-issues"></span></a>
           <a href="#settings" data-view="settings"><svg viewBox="0 0 24 24"><path d="M5 7h9M18 7h1M5 17h3M12 17h7"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Safety &amp; settings</a>
         </nav>
@@ -339,6 +340,43 @@
           <p class="form-error" id="user-error"></p>
           <div class="btn-row"><button class="btn btn-primary" type="submit">Add person</button></div>
         </form>
+      </section>
+
+      <!-- API (admin) -->
+      <section class="view" data-view="api">
+        <header class="page-head">
+          <div><h1>API &amp; webhooks</h1><p class="lede">Let a Google Sheet, Zapier, your CRM or a small script schedule messages. They follow the same safety rules as the app: same limits, same gaps, same duplicate guard.</p></div>
+          <div class="btn-row"><a class="btn btn-ghost" href="openapi.yaml" target="_blank" rel="noopener">OpenAPI file</a><button class="btn btn-primary" type="button" id="key-new">New API key</button></div>
+        </header>
+
+        <div class="panel">
+          <h2 class="panel-title">Start in 3 steps</h2>
+          <ol class="steps">
+            <li><b>Make a key.</b> Press <i>New API key</i>. Pick <i>Schedule</i> for most uses. You see the key once, so copy it then.</li>
+            <li><b>Check it works.</b> Paste this in a terminal with your key:
+              <div class="code-box"><pre class="code" id="api-try"></pre><button class="btn btn-ghost btn-sm copy" type="button" data-copy="api-try">Copy</button></div></li>
+            <li><b>Schedule a message.</b> Use a saved list name or group names. Times are India time unless you add a timezone.
+              <div class="code-box"><pre class="code" id="api-post"></pre><button class="btn btn-ghost btn-sm copy" type="button" data-copy="api-post">Copy</button></div></li>
+          </ol>
+          <p class="hint">Sending the same request again with the same <code>Idempotency-Key</code> never schedules it twice. Every API message shows up in Scheduled like any other, marked with the key's name, and can be undone for 30 seconds.</p>
+        </div>
+
+        <h2 class="sec-title api-sec">Keys</h2>
+        <div class="table-wrap"><table class="table" id="keys-table"><thead><tr><th>Name</th><th>Can</th><th>Key</th><th>Last used</th><th>Made by</th><th></th></tr></thead><tbody></tbody></table></div>
+
+        <h2 class="sec-title api-sec">Webhooks</h2>
+        <p class="hint">WA Box tells your system when a message starts, when it finishes (with every group's result), and the moment a group fails. Failed deliveries are retried for about 9 hours, then shown below and raised as an alert.</p>
+        <div class="table-wrap"><table class="table" id="hooks-table"><thead><tr><th>Address</th><th>Events</th><th>Last delivery</th><th></th></tr></thead><tbody></tbody></table></div>
+        <form class="panel narrow" id="hook-form">
+          <h2 class="panel-title">Add a webhook</h2>
+          <label class="fld"><span>Address</span><input name="url" type="url" required placeholder="https://example.com/wabox-events" autocomplete="off"></label>
+          <fieldset class="fld"><span>Events</span><div class="check-row" id="hook-events"></div></fieldset>
+          <p class="form-error" id="hook-error"></p>
+          <div class="btn-row"><button class="btn btn-primary" type="submit">Add webhook</button></div>
+        </form>
+
+        <h2 class="sec-title api-sec">Recent deliveries</h2>
+        <div class="table-wrap"><table class="table" id="deliveries-table"><thead><tr><th>When</th><th>Event</th><th>To</th><th>Result</th></tr></thead><tbody></tbody></table></div>
       </section>
 
       <!-- System (admin) -->

@@ -22,6 +22,7 @@
   const dur = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
   const firstLine = t => (String(t || '').split('\n').find(l => l.trim()) || '').replace(/[*_~`]/g, '').trim();
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const who = u => String(u || '').startsWith('api:') ? `${u.slice(4)} (API)` : u;
   const jobName = j => j.title || firstLine(j.message) || `Message #${j.id}`;
   const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
@@ -104,7 +105,7 @@
 
   // ============ screens & routing ============
   function showScreen(name) { for (const id of ['login', 'password', 'app']) $('#view-' + id).classList.toggle('hidden', id !== name); }
-  const ADMIN_VIEWS = new Set(['whatsapp', 'team', 'settings', 'system']);
+  const ADMIN_VIEWS = new Set(['whatsapp', 'team', 'settings', 'system', 'api']);
   function parseHash() {
     const [v, q] = location.hash.replace(/^#/, '').split('?');
     return { view: v || 'today', params: Object.fromEntries(new URLSearchParams(q || '')) };
@@ -125,7 +126,7 @@
     closeMenu(); closeDrawer(); clearInterval(S.qrTimer);
     window.scrollTo(0, 0);
     const render = { today: renderToday, compose: openCompose, scheduled: renderScheduled, sent: renderSent, templates: renderTemplates,
-      lists: renderLists, whatsapp: renderWhatsapp, team: renderTeam, settings: renderSettings, system: renderSystem }[view];
+      lists: renderLists, whatsapp: renderWhatsapp, team: renderTeam, settings: renderSettings, system: renderSystem, api: renderApi }[view];
     render && render();
   }
   window.addEventListener('hashchange', route);
@@ -310,7 +311,7 @@
     return `<div class="job-row" role="button" tabindex="0" data-job="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span>
       <span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
-        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(j.createdBy.split('@')[0])}</span></span>
+        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(who(j.createdBy).split('@')[0])}</span></span>
         ${j.status === 'running' ? `<span class="live">${esc(liveLine(j))}</span><span class="progress"><i data-w="${pct}"></i></span>` : ''}
         ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
       </span>${soon ? `<span class="soon"><span class="countdown" data-countdown="${j.startAt}"></span><button type="button" class="btn btn-ghost btn-sm" data-undo="${j.id}">${j.repeatDays.length ? 'Skip this time' : 'Undo'}</button></span>` : pill(j.status)}</div>`;
@@ -349,8 +350,8 @@
         <dt>Groups</dt><dd>${plural(j.groups.length, 'group')}${j.sends.length ? `, ${sent} sent${delivered ? ` · <span class="ticks d">✓✓</span> delivered in ${delivered}/${j.groups.length}` : ''}` : ''}</dd>
         ${j.status === 'running' ? `<dt>Progress</dt><dd>${esc(liveLine(j))}</dd>` : ''}
         <dt>Pacing</dt><dd>${esc(pacingLabel(j))}</dd>
-        <dt>Created by</dt><dd>${esc(j.createdBy)}</dd>
-        ${j.updatedBy !== j.createdBy ? `<dt>Last edited by</dt><dd>${esc(j.updatedBy)}</dd>` : ''}
+        <dt>Created by</dt><dd>${esc(who(j.createdBy))}</dd>
+        ${j.updatedBy !== j.createdBy ? `<dt>Last edited by</dt><dd>${esc(who(j.updatedBy))}</dd>` : ''}
       </dl>
       <div class="mini-bubble"><div class="bubble">${j.hasImage ? `<img src="api/jobs/${j.id}/image" alt="">` : j.imageUrl ? `<img src="${esc(j.imageUrl)}" alt="">` : j.imagePurged ? '<p class="hint">Image deleted after sending.</p>' : ''}<div class="bubble-text">${waFormat(j.message)}</div><span class="bubble-time">${ist(j.runAt).time}</span></div></div>
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
@@ -986,6 +987,102 @@
     e.preventDefault(); $('#user-error').textContent = '';
     try { await api('users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); toast('Person added'); renderTeam(); }
     catch (err) { $('#user-error').textContent = err.message; }
+  });
+
+  // ============ API & webhooks (admin) ============
+  const apiBase = () => new URL('api/v1', document.baseURI).href;
+  const SCOPE_LABEL = { read: 'Read only', schedule: 'Schedule', full: 'Full' };
+  const SCOPE_HELP = { read: 'See status, groups, lists and messages', schedule: 'Read, schedule, and cancel what it scheduled', full: 'Schedule and cancel any message' };
+  const EVENT_LABEL = { 'message.started': 'Message started', 'message.finished': 'Message finished', 'group.failed': 'A group failed', ping: 'Test' };
+  function curlExamples(key = 'wbx_YOUR_KEY') {
+    const list = S.lists[0]?.name || 'Weekend cohorts';
+    const d = ist(Date.now() + DAY).date;
+    return {
+      tryIt: `curl -H "Authorization: Bearer ${key}" \\\n  ${apiBase()}/status`,
+      post: `curl -X POST ${apiBase()}/messages \\\n  -H "Authorization: Bearer ${key}" \\\n  -H "Content-Type: application/json" \\\n  -H "Idempotency-Key: ${d}-reminder" \\\n  -d '{"text": "Hi {group} 👋 Class at 11 AM today!", "list": "${list}", "sendAt": {"date": "${d}", "time": "09:30"}}'`,
+    };
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast('Copied'); } catch { toast('Select the text and copy it', true); }
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-copy]'); if (!b) return;
+    const el = document.getElementById(b.dataset.copy); if (el) copyText(el.textContent);
+  });
+
+  async function renderApi() {
+    const ex = curlExamples();
+    $('#api-try').textContent = ex.tryIt; $('#api-post').textContent = ex.post;
+    try {
+      const [{ keys }, h] = await Promise.all([api('apikeys'), api('webhooks')]);
+      const lname = id => S.lists.find(l => l.id === id)?.name || `list ${id}`;
+      $('#keys-table tbody').innerHTML = keys.length ? keys.map(k => `<tr data-id="${k.id}"${k.revokedAt ? ' class="dim"' : ''}>
+        <td><b>${esc(k.name)}</b></td>
+        <td>${SCOPE_LABEL[k.scope]}${k.listIds ? `<span class="hint sub">Only ${esc(k.listIds.map(lname).join(', '))}</span>` : ''}</td>
+        <td><code>${esc(k.prefix)}…</code></td>
+        <td class="when">${k.revokedAt ? '<span class="pill cancelled">Revoked</span>' : k.lastUsedAt ? ago(k.lastUsedAt) : 'Never'}</td>
+        <td>${esc(k.createdBy)}</td>
+        <td class="actions">${k.revokedAt ? '' : '<button class="btn btn-danger-ghost btn-sm" data-act="revoke" type="button">Revoke</button>'}</td></tr>`).join('')
+        : '<tr class="empty-row"><td colspan="6">No keys yet. Press “New API key” to make one.</td></tr>';
+      $('#hook-events').innerHTML = h.events.map(ev => `<label class="check"><input type="checkbox" name="events" value="${ev}" checked> ${EVENT_LABEL[ev]} <code>${ev}</code></label>`).join('');
+      $('#hooks-table tbody').innerHTML = h.webhooks.length ? h.webhooks.map(w => `<tr data-id="${w.id}">
+        <td><b class="break">${esc(w.url)}</b></td><td>${w.events.map(ev => esc(EVENT_LABEL[ev] || ev)).join(', ')}</td>
+        <td class="when">${w.lastDelivery ? `${w.lastDelivery.status === 'ok' ? '✓' : w.lastDelivery.status === 'failed' ? '✕' : '…'} ${ago(w.lastDelivery.created_at)}` : 'None yet'}</td>
+        <td class="actions"><button class="btn btn-ghost btn-sm" data-act="test" type="button">Send a test</button><button class="btn btn-danger-ghost btn-sm" data-act="remove" type="button">Remove</button></td></tr>`).join('')
+        : '<tr class="empty-row"><td colspan="4">No webhooks. Add one below if another system should hear about sends.</td></tr>';
+      $('#deliveries-table tbody').innerHTML = h.deliveries.length ? h.deliveries.map(d => `<tr>
+        <td class="when">${esc(whenLabel(d.created_at))}</td><td>${esc(EVENT_LABEL[d.event] || d.event)}</td><td class="msg break">${esc(d.url)}</td>
+        <td>${d.status === 'ok' ? `<span class="pill done">Delivered</span>${d.attempts > 1 ? `<span class="hint sub">after ${d.attempts} tries</span>` : ''}`
+          : d.status === 'failed' ? `<span class="pill failed">Gave up</span><span class="err">${esc(d.last_error || '')} · ${d.attempts} tries</span>`
+          : `<span class="pill retry">Retrying</span><span class="hint sub">${esc(d.last_error || 'Sending')} · next ${esc(whenLabel(d.next_at))}</span>`}</td></tr>`).join('')
+        : '<tr class="empty-row"><td colspan="4">Nothing sent yet.</td></tr>';
+    } catch (err) { toast(err.message, true); }
+  }
+
+  $('#key-new').addEventListener('click', async () => {
+    const html = `<label class="fld"><span>Name</span><input id="key-name" maxlength="60" placeholder="e.g. Google Sheet, Zapier" autocomplete="off"><small>So you know later what uses it.</small></label>
+      <fieldset class="fld"><span>What it can do</span><div class="radio-list">${['schedule', 'read', 'full'].map((sc, i) =>
+        `<label class="radio"><input type="radio" name="key-scope" value="${sc}"${i ? '' : ' checked'}><span><b>${SCOPE_LABEL[sc]}</b><small>${SCOPE_HELP[sc]}</small></span></label>`).join('')}</div></fieldset>
+      ${S.lists.length ? `<fieldset class="fld"><span>Limit to group lists <small>(optional)</small></span><div class="check-row">${S.lists.map(l =>
+        `<label class="check"><input type="checkbox" name="key-list" value="${l.id}"> ${esc(l.name)}</label>`).join('')}</div><small>Leave empty to allow every saved group.</small></fieldset>` : ''}
+      <p class="form-error" id="key-error"></p>`;
+    if (!await dialog({ title: 'New API key', html, ok: 'Make key', onOpen: () => $('#key-name').focus() })) return;
+    try {
+      const k = await api('apikeys', { method: 'POST', body: { name: $('#key-name').value, scope: $('input[name="key-scope"]:checked').value,
+        listIds: $$('input[name="key-list"]:checked').map(i => Number(i.value)) } });
+      const ex = curlExamples(k.key);
+      await dialog({ title: `Key for “${k.name}”`, ok: 'Done', cancel: '', html: `<p>Copy it now. For safety, WA Box keeps only a fingerprint and can't show it again.</p>
+        <div class="code-box"><pre class="code key" id="key-once">${esc(k.key)}</pre><button class="btn btn-primary btn-sm copy" type="button" data-copy="key-once">Copy key</button></div>
+        <p class="hint">Ready to paste, with your key filled in:</p>
+        <div class="code-box"><pre class="code" id="key-curl">${esc(ex.tryIt)}</pre><button class="btn btn-ghost btn-sm copy" type="button" data-copy="key-curl">Copy</button></div>
+        <p class="hint">Keep it out of shared documents and screenshots. If it leaks, revoke it here and make a new one.</p>` });
+      renderApi();
+    } catch (err) { toast(err.message, true); }
+  });
+  $('#keys-table').addEventListener('click', async e => {
+    const b = e.target.closest('[data-act="revoke"]'); if (!b) return;
+    if (!await dialog({ title: 'Revoke this key?', html: '<p>Anything using it stops working right away. Messages it already scheduled still go out.</p>', ok: 'Revoke', danger: true })) return;
+    try { await api(`apikeys/${b.closest('tr').dataset.id}/revoke`, { method: 'POST' }); toast('Key revoked'); renderApi(); } catch (err) { toast(err.message, true); }
+  });
+  $('#hooks-table').addEventListener('click', async e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const id = b.closest('tr').dataset.id;
+    try {
+      if (b.dataset.act === 'test') { await api(`webhooks/${id}/test`, { method: 'POST' }); toast('Test sent. Check Recent deliveries.'); setTimeout(renderApi, 1500); return; }
+      if (!await dialog({ title: 'Remove this webhook?', html: '<p>It stops getting events right away.</p>', ok: 'Remove', danger: true })) return;
+      await api(`webhooks/${id}`, { method: 'DELETE' }); toast('Webhook removed'); renderApi();
+    } catch (err) { toast(err.message, true); }
+  });
+  $('#hook-form').addEventListener('submit', async e => {
+    e.preventDefault(); $('#hook-error').textContent = '';
+    try {
+      const w = await api('webhooks', { method: 'POST', body: { url: e.target.url.value, events: $$('#hook-events input:checked').map(i => i.value) } });
+      e.target.reset();
+      await dialog({ title: 'Webhook added', ok: 'Done', cancel: '', html: `<p>Each request carries an <code>X-WABox-Signature</code> header made with this secret, so your system can check it really came from WA Box. Copy it now; it isn't shown again.</p>
+        <div class="code-box"><pre class="code key" id="hook-secret">${esc(w.secret)}</pre><button class="btn btn-primary btn-sm copy" type="button" data-copy="hook-secret">Copy secret</button></div>
+        <p class="hint">Press “Send a test” to see one arrive.</p>` });
+      renderApi();
+    } catch (err) { $('#hook-error').textContent = err.message; }
   });
 
   // ============ Settings (admin) ============

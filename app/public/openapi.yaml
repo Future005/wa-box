@@ -1,0 +1,404 @@
+openapi: 3.1.0
+info:
+  title: WA Box API
+  version: 1.0.0
+  summary: Schedule WhatsApp group messages with the same safety rules as the WA Box app.
+  description: |
+    Everything scheduled through the API goes through exactly the same checks as the app:
+    daily and hourly limits, random gaps between groups, the duplicate guard, quiet checks on
+    image links, and a 30-second undo window. API messages appear in the app's Scheduled list,
+    marked with the key's name.
+
+    **Auth.** Send your key as `Authorization: Bearer wbx_...` (or `X-API-Key: wbx_...`).
+    Make keys in the app under *API & webhooks*. Scopes: `read`, `schedule`, `full`.
+
+    **Times.** WA Box works in India time (Asia/Kolkata). `sendAt` takes `"now"`, an ISO 8601
+    date-time **with** a timezone, or `{ "date": "YYYY-MM-DD", "time": "HH:MM" }` in India time.
+
+    **Errors** always look like `{ "error": { "code": "...", "message": "..." } }`.
+
+    **Rate limit.** 60 requests a minute per key (`RateLimit-*` headers tell you where you are).
+
+    **Webhooks.** WA Box POSTs `message.started`, `message.finished` and `group.failed` to the
+    addresses you add, signed with `X-WABox-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`.
+  contact:
+    name: Designed by Bhavishya
+    url: https://www.linkedin.com/in/bhavishyabharadwaj/
+servers:
+  - url: /api/v1
+    description: This WA Box
+security:
+  - bearer: []
+  - apiKeyHeader: []
+
+paths:
+  /status:
+    get:
+      summary: Is WhatsApp connected, is sending on, and how much is left today
+      operationId: getStatus
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /groups:
+    get:
+      summary: Saved groups this key may use
+      description: Only groups saved in WA Box (matching the group keywords). A key limited to lists only sees the groups in those lists.
+      operationId: listGroups
+      responses:
+        '200':
+          description: Groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups: { type: array, items: { $ref: '#/components/schemas/Group' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /lists:
+    get:
+      summary: Saved group lists (e.g. "Weekend cohorts")
+      operationId: listLists
+      responses:
+        '200':
+          description: Lists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lists:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        groups: { type: array, items: { $ref: '#/components/schemas/Group' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /messages:
+    get:
+      summary: Upcoming (default) or past messages
+      operationId: listMessages
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [upcoming, history], default: upcoming }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Schedule a message
+      description: Needs a `schedule` or `full` key. Returns 201 with the message. It never starts sooner than 30 seconds from now, so it can still be undone in the app.
+      operationId: createMessage
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: Any string up to 100 characters. Sending the same key and body again within 24 hours returns the first answer instead of scheduling twice. A different body with the same key gets 409.
+          schema: { type: string, maxLength: 100 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewMessage' }
+            examples:
+              list:
+                summary: To a saved list, tomorrow 09:30 India time
+                value: { text: "Hi {group} 👋 Class at 11 AM today!", list: "Weekend cohorts", sendAt: { date: "2026-11-01", time: "09:30" } }
+              groups:
+                summary: Two groups by name, ISO time, gentle pacing, with an image
+                value: { text: "*New batch* starts Monday", groups: ["Weekend Cohort 3", "Weekend Cohort 4"], sendAt: "2026-11-01T10:00:00+05:30", pacing: gentle, imageUrl: "https://example.com/poster.jpg" }
+              weekly:
+                summary: Every Saturday and Sunday
+                value: { text: "{day} class at 11 AM. See you!", list: "Weekend cohorts", sendAt: { date: "2026-10-31", time: "09:00" }, repeat: [sat, sun] }
+      responses:
+        '201':
+          description: Scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: '#/components/schemas/Message' }
+                  undoSeconds: { type: integer, example: 30 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /messages/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: One message, with each group's status and delivery ticks
+      operationId: getMessage
+      responses:
+        '200':
+          description: The message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: '#/components/schemas/Message' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Cancel a message that hasn't finished
+      description: A `schedule` key can cancel the messages it scheduled. A `full` key can cancel any. Groups already sent stay sent.
+      operationId: cancelMessage
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: '#/components/schemas/Message' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+webhooks:
+  message.started:
+    post:
+      summary: The first group of a message is about to be sent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/EventEnvelope'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        message: { $ref: '#/components/schemas/EventMessage' }
+                        groups: { type: array, items: { $ref: '#/components/schemas/Group' } }
+                        practiceMode: { type: boolean }
+      responses: { '200': { description: Any 2xx means received } }
+  message.finished:
+    post:
+      summary: Every group has been tried (once per repeat for weekly messages)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/EventEnvelope'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        message: { $ref: '#/components/schemas/EventMessage' }
+                        status: { type: string, enum: [done, done_with_errors] }
+                        groups:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: { type: string }
+                              name: { type: string }
+                              status: { $ref: '#/components/schemas/GroupStatus' }
+                              sentAt: { type: [string, 'null'], format: date-time }
+                              error: { type: [string, 'null'] }
+      responses: { '200': { description: Any 2xx means received } }
+  group.failed:
+    post:
+      summary: One group did not get the message (failed, unconfirmed, missed, skipped or duplicate blocked)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/EventEnvelope'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        message: { $ref: '#/components/schemas/EventMessage' }
+                        group: { $ref: '#/components/schemas/Group' }
+                        status: { $ref: '#/components/schemas/GroupStatus' }
+                        error: { type: [string, 'null'] }
+      responses: { '200': { description: Any 2xx means received } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, description: 'wbx_ followed by 32 letters and digits' }
+    apiKeyHeader: { type: apiKey, in: header, name: X-API-Key }
+
+  responses:
+    Unauthorized:
+      description: Missing, wrong or revoked key
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: The key's scope doesn't allow this
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    BadRequest:
+      description: The request was refused before anything was scheduled (codes `invalid_request`, `unknown_group`)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: No such message (or not visible to this key)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: '`idempotency_conflict` or `not_active`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RateLimited:
+      description: More than 60 requests in a minute
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, enum: [unauthorized, forbidden, invalid_request, unknown_group, not_found, not_active, idempotency_conflict, rate_limited, server_error] }
+            message: { type: string, description: A sentence you can show a person as-is }
+
+    Group:
+      type: object
+      properties:
+        id: { type: string, example: '120363040000000000@g.us' }
+        name: { type: string, example: Weekend Cohort 3 }
+
+    GroupStatus:
+      type: string
+      enum: [pending, sending, retry, uncertain, sent, dry_run, failed, unconfirmed, missed, skipped, blocked_duplicate]
+      description: |
+        `sent` reached WhatsApp. `dry_run` practice mode, nothing sent. `failed` WhatsApp refused it.
+        `unconfirmed` no clear answer and not found in the chat; never resent on its own.
+        `missed` too late to send. `skipped` the group is no longer saved. `blocked_duplicate` the same text already went to that group recently.
+
+    Status:
+      type: object
+      properties:
+        whatsapp: { type: string, enum: [connected, disconnected] }
+        sending: { type: string, enum: ['on', paused] }
+        practiceMode: { type: boolean, description: When true nothing is really sent }
+        limits:
+          type: object
+          properties:
+            perDay: { type: integer }
+            perHour: { type: integer }
+            sentToday: { type: integer }
+            minGapSeconds: { type: integer }
+        key:
+          type: object
+          properties:
+            name: { type: string }
+            scope: { type: string, enum: [read, schedule, full] }
+            limitedToLists: { type: [array, 'null'], items: { type: integer } }
+        timezone: { type: string, example: Asia/Kolkata }
+
+    NewMessage:
+      type: object
+      required: [text, sendAt]
+      properties:
+        text: { type: string, maxLength: 4000, description: 'WhatsApp formatting works (*bold*, _italic_). {group}, {day} and {date} are filled in per group.' }
+        title: { type: string, maxLength: 80, description: Shown in the app instead of the first line }
+        groups: { type: array, items: { type: string }, description: Group ids or exact group names (case doesn't matter) }
+        list: { type: string, description: A saved list's name or id }
+        lists: { type: array, items: { type: string } }
+        sendAt:
+          oneOf:
+            - type: string
+              enum: [now]
+            - type: string
+              format: date-time
+              description: Must include a timezone, e.g. 2026-11-01T10:00:00+05:30
+            - type: object
+              required: [date, time]
+              properties:
+                date: { type: string, example: '2026-11-01' }
+                time: { type: string, example: '09:30', description: India time, 24-hour }
+        repeat:
+          type: array
+          items: { type: string, enum: [sun, mon, tue, wed, thu, fri, sat] }
+          description: Repeat every week on these days at the same time
+        pacing:
+          description: 'Random gap between groups. gentle = 60–180 s, standard = 40–120 s (default). Never below the safety minimum.'
+          oneOf:
+            - type: string
+              enum: [gentle, standard]
+            - type: object
+              properties:
+                minSeconds: { type: integer }
+                maxSeconds: { type: integer }
+        imageUrl: { type: string, format: uri, description: 'Public https link to a JPG, PNG or WebP under 5 MB (Google Drive share links work). Sent by link; nothing is stored.' }
+        linkPreview: { type: boolean, default: true }
+
+    Message:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: [string, 'null'] }
+        text: { type: string }
+        status: { type: string, enum: [scheduled, running, done, done_with_errors, cancelled] }
+        note: { type: [string, 'null'], description: 'Why it is waiting, e.g. "Daily limit of 30 reached..."' }
+        sendAt: { type: string, format: date-time }
+        startsAt: { type: string, format: date-time, description: sendAt plus a small random offset }
+        date: { type: string, description: India date }
+        time: { type: string, description: India time }
+        dow: { type: integer, description: 0 = Sunday }
+        timezone: { type: string }
+        repeat: { type: array, items: { type: string } }
+        pacing: { type: object, properties: { minSeconds: { type: integer }, maxSeconds: { type: integer } } }
+        imageUrl: { type: [string, 'null'] }
+        hasUploadedImage: { type: boolean }
+        linkPreview: { type: boolean }
+        createdBy: { type: string, example: 'api:Google Sheet' }
+        createdAt: { type: string, format: date-time }
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              status: { $ref: '#/components/schemas/GroupStatus' }
+              sentAt: { type: [string, 'null'], format: date-time }
+              delivery: { type: [string, 'null'], enum: [sent, delivered, read, null], description: WhatsApp ticks }
+              error: { type: [string, 'null'] }
+
+    EventEnvelope:
+      type: object
+      properties:
+        id: { type: string, example: evt_42, description: Same id on retries; use it to ignore repeats }
+        event: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    EventMessage:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: [string, 'null'] }
+        preview: { type: string }
+        runAt: { type: string, format: date-time }
+        repeat: { type: array, items: { type: string } }
+        createdBy: { type: string }
