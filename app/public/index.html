@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f3d33">
+  <title>WA Box</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="view-login" class="auth hidden">
+    <form id="login-form" class="auth-card" autocomplete="on">
+      <div class="brand"><span class="logo">◷</span> WA Box</div>
+      <p class="muted">Scheduled WhatsApp group messages for the team.</p>
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <p class="form-error" id="login-error"></p>
+      <button class="btn primary wide" type="submit">Log in</button>
+    </form>
+  </section>
+
+  <!-- Forced password change -->
+  <section id="view-password" class="auth hidden">
+    <form id="password-form" class="auth-card">
+      <div class="brand"><span class="logo">◷</span> Set your password</div>
+      <p class="muted">Choose a new password (at least 10 characters) before you continue.</p>
+      <label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+      <label>New password<input name="next" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label>Repeat new password<input name="again" type="password" autocomplete="new-password" minlength="10" required></label>
+      <p class="form-error" id="password-error"></p>
+      <button class="btn primary wide" type="submit">Save password</button>
+    </form>
+  </section>
+
+  <!-- App -->
+  <section id="view-app" class="hidden">
+    <header class="topbar">
+      <div class="brand"><span class="logo">◷</span> WA Box</div>
+      <button id="wa-pill" class="pill" type="button" title="WhatsApp connection">…</button>
+      <div class="spacer"></div>
+      <span id="me" class="muted small"></span>
+      <button id="logout" class="btn ghost small" type="button">Log out</button>
+    </header>
+
+    <div id="banners"></div>
+
+    <nav class="tabs" id="tabs">
+      <button data-tab="schedule" class="active">Schedule</button>
+      <button data-tab="upcoming">Upcoming <span class="count" id="upcoming-count"></span></button>
+      <button data-tab="history">History</button>
+      <button data-tab="templates">Templates</button>
+      <button data-tab="whatsapp" class="admin-only">WhatsApp</button>
+      <button data-tab="team" class="admin-only">Team</button>
+      <button data-tab="settings" class="admin-only">Settings</button>
+    </nav>
+
+    <main>
+      <!-- Schedule -->
+      <section class="tab" id="tab-schedule">
+        <form id="job-form" class="card">
+          <div class="card-head">
+            <h2 id="job-form-title">New scheduled message</h2>
+            <button type="button" id="cancel-edit" class="btn ghost small hidden">Stop editing</button>
+          </div>
+
+          <label>Label <span class="muted">(optional, only for your team)</span>
+            <input name="title" maxlength="80" placeholder="e.g. Weekend cohort reminder">
+          </label>
+
+          <div class="field">
+            <div class="field-head">
+              <span>Groups</span>
+              <span class="muted small"><span id="group-picked">0</span> selected ·
+                <button type="button" class="link" id="groups-refresh">Refresh list</button></span>
+            </div>
+            <div id="group-chips" class="chips"></div>
+            <input id="group-search" type="search" placeholder="Search your WhatsApp groups…" autocomplete="off">
+            <div id="group-list" class="group-list"></div>
+            <div class="row small">
+              <button type="button" class="link" id="groups-all">Select all shown</button>
+              <button type="button" class="link" id="groups-none">Clear</button>
+              <span class="muted" id="groups-note"></span>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-head">
+              <span>Message</span>
+              <span class="muted small"><span id="msg-count">0</span>/4000 ·
+                <button type="button" class="link" id="tpl-load">Use template</button> ·
+                <button type="button" class="link" id="tpl-save">Save as template</button></span>
+            </div>
+            <textarea name="message" rows="7" maxlength="4000" required placeholder="Write the message exactly as it should appear in WhatsApp. *bold* and _italic_ work."></textarea>
+          </div>
+
+          <div class="field">
+            <span>Image <span class="muted">(optional, JPG/PNG/WebP up to 5 MB; message becomes the caption)</span></span>
+            <div class="row">
+              <input type="file" name="image" accept="image/jpeg,image/png,image/webp">
+              <label class="inline hidden" id="remove-image-wrap"><input type="checkbox" name="removeImage" value="1"> Remove current image</label>
+            </div>
+          </div>
+
+          <div class="grid2">
+            <label>Date (IST)<input name="date" type="date" required></label>
+            <label>Time (IST)<input name="time" type="time" required></label>
+          </div>
+          <div class="row small quick">
+            <span class="muted">Quick:</span>
+            <button type="button" class="chip-btn" data-quick="tomorrow">Tomorrow</button>
+            <button type="button" class="chip-btn" data-quick="thu">Thu</button>
+            <button type="button" class="chip-btn" data-quick="fri">Fri</button>
+            <button type="button" class="chip-btn" data-quick="sat">Sat</button>
+            <button type="button" class="chip-btn" data-quick="sun">Sun</button>
+          </div>
+
+          <div class="field">
+            <span>Repeat every week on <span class="muted">(optional)</span></span>
+            <div class="days" id="repeat-days">
+              <label><input type="checkbox" value="1"><span>Mon</span></label>
+              <label><input type="checkbox" value="2"><span>Tue</span></label>
+              <label><input type="checkbox" value="3"><span>Wed</span></label>
+              <label><input type="checkbox" value="4"><span>Thu</span></label>
+              <label><input type="checkbox" value="5"><span>Fri</span></label>
+              <label><input type="checkbox" value="6"><span>Sat</span></label>
+              <label><input type="checkbox" value="0"><span>Sun</span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <span>Random gap between groups (seconds)</span>
+            <div class="grid2">
+              <label class="sub">Min<input name="gapMin" type="number" min="30" max="1800" value="40" required></label>
+              <label class="sub">Max<input name="gapMax" type="number" min="30" max="3600" value="120" required></label>
+            </div>
+            <p class="muted small">Never less than 30 s. Each group gets a different random wait, plus a short "typing…" before each message.</p>
+          </div>
+
+          <div class="preview" id="job-preview">Pick groups and a time to see the send window.</div>
+          <p class="form-error" id="job-error"></p>
+          <div class="row end">
+            <button class="btn primary" type="submit" id="job-submit">Schedule message</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Upcoming -->
+      <section class="tab hidden" id="tab-upcoming">
+        <div id="upcoming-list" class="stack"></div>
+      </section>
+
+      <!-- History -->
+      <section class="tab hidden" id="tab-history">
+        <div class="card">
+          <div class="card-head"><h2>Every message, per group</h2><button class="btn ghost small" id="history-reload" type="button">Reload</button></div>
+          <div class="table-wrap"><table id="history-table"><thead><tr><th>When (IST)</th><th>Group</th><th>Message</th><th>Result</th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Finished &amp; cancelled jobs</h2></div>
+          <div id="past-jobs" class="stack"></div>
+        </div>
+      </section>
+
+      <!-- Templates -->
+      <section class="tab hidden" id="tab-templates">
+        <div class="card">
+          <div class="card-head"><h2>Saved templates</h2></div>
+          <p class="muted small">Save from the Schedule tab with "Save as template". Click one to start a new message with it.</p>
+          <div id="templates-list" class="stack"></div>
+        </div>
+      </section>
+
+      <!-- WhatsApp (admin) -->
+      <section class="tab hidden" id="tab-whatsapp">
+        <div class="card">
+          <div class="card-head"><h2>WhatsApp connection</h2></div>
+          <div id="wa-detail"></div>
+          <div id="qr-wrap" class="qr-wrap hidden">
+            <img id="qr-img" alt="WhatsApp login QR code">
+            <ol class="small">
+              <li>Open WhatsApp on the phone you want to send from.</li>
+              <li>Settings → Linked devices → Link a device.</li>
+              <li>Scan this code. It refreshes by itself.</li>
+            </ol>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="wa-connect" type="button">Connect / show QR</button>
+            <button class="btn danger ghost" id="wa-logout" type="button">Unlink WhatsApp</button>
+          </div>
+          <p class="muted small">Tip: open WhatsApp on that phone at least once every few days. Linked devices log out if the phone is offline for about 14 days.</p>
+        </div>
+      </section>
+
+      <!-- Team (admin) -->
+      <section class="tab hidden" id="tab-team">
+        <div class="card">
+          <div class="card-head"><h2>Team members</h2></div>
+          <div class="table-wrap"><table id="users-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <form class="card" id="user-form">
+          <div class="card-head"><h2>Add a person</h2></div>
+          <div class="grid3">
+            <label>Username<input name="username" required pattern="[A-Za-z0-9._\-]{3,32}" autocomplete="off"></label>
+            <label>Temporary password<input name="password" type="text" minlength="10" required autocomplete="off"></label>
+            <label>Role<select name="role"><option value="member">Member (schedule only)</option><option value="admin">Admin</option></select></label>
+          </div>
+          <p class="muted small">They'll be asked to set their own password the first time they log in. Share the temporary one privately.</p>
+          <p class="form-error" id="user-error"></p>
+          <div class="row end"><button class="btn primary" type="submit">Add person</button></div>
+        </form>
+      </section>
+
+      <!-- Settings (admin) -->
+      <section class="tab hidden" id="tab-settings">
+        <form class="card" id="settings-form">
+          <div class="card-head"><h2>Sending safety</h2></div>
+          <label class="toggle"><input type="checkbox" name="dryRun"><span><b>Dry run</b> — log what would be sent, but send nothing.</span></label>
+          <label class="toggle"><input type="checkbox" name="paused"><span><b>Pause all sending</b> — jobs wait until you resume.</span></label>
+          <div class="grid2">
+            <label>Daily limit (messages per day)<input name="dailyCap" type="number" min="1" max="60"></label>
+            <label>Skip if late by more than (minutes)<input name="maxLateMin" type="number" min="5" max="1440"></label>
+          </div>
+          <p class="muted small">If the server or WhatsApp was offline and a job is later than this, it's marked "missed" instead of being sent at an odd hour.</p>
+          <p class="form-error" id="settings-error"></p>
+          <div class="row end"><button class="btn primary" type="submit">Save</button></div>
+        </form>
+        <div class="card">
+          <div class="card-head"><h2>Activity log</h2></div>
+          <div class="table-wrap"><table id="audit-table"><thead><tr><th>When (IST)</th><th>Who</th><th>What</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </section>
+    </main>
+  </section>
+
+  <dialog id="dialog"><form method="dialog" class="dialog-body"><h3 id="dialog-title"></h3><div id="dialog-content"></div><div class="row end" id="dialog-actions"></div></form></dialog>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
