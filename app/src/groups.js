@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS wa_groups (
 );
 `);
 
-const DEFAULT_KEYWORDS = ['Cohort', 'Masterclass'];
+// Starting keywords until an admin changes them (GROUP_KEYWORDS="Cohort,Masterclass").
+// Empty means every group is offered; on a phone with hundreds of groups, set a few keywords.
+const DEFAULT_KEYWORDS = String(process.env.GROUP_KEYWORDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
 const MIN_SYNC_INTERVAL_MS = 2 * 60 * 1000;
 const SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 

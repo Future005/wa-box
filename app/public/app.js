@@ -203,7 +203,8 @@
     const a = [];
     if (wa !== 'ready' && wa !== 'unknown') a.push(['bad', "WhatsApp isn't connected. Scheduled messages will wait until it is.", isAdmin() ? ['Connect', '#whatsapp'] : null]);
     if (s.paused) a.push(['warn', 'Sending is paused. Scheduled messages are waiting.', isAdmin() ? ['Resume', 'resume'] : null]);
-    if (s.dryRun) a.push(['warn', "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
+    if (s.dryRun) a.push(['warn', s.local ? "Local copy: practice mode is on. Messages run on schedule but don't reach WhatsApp. It switches back on every time this copy starts."
+      : "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
     if (s.issues && isAdmin() && S.view !== 'system') a.push(['bad', `${plural(s.issues, 'issue')} ${s.issues === 1 ? 'needs' : 'need'} attention.`, ['Open System & logs', '#system']]);
     $('#count-issues').textContent = isAdmin() && s.issues ? s.issues : '';
     $('#alerts').innerHTML = a.map(([c, t, act], i) => `<div class="alert ${c}">${ICON.warn}<span>${esc(t)}</span><span class="spacer"></span>${act ? (act[1].startsWith('#') ? `<a class="btn btn-ghost" href="${act[1]}">${esc(act[0])}</a>` : `<button class="btn btn-ghost" data-alert="${esc(act[1])}">${esc(act[0])}</button>`) : ''}</div>`).join('');

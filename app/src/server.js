@@ -64,8 +64,15 @@ app.get('/health/monitor', (_req, res) => {
 
 // Serve index.html with a <base href> so assets and API calls resolve under /wabox/
 // whether the visitor opened /wabox or /wabox/, and whether or not the proxy strips the prefix.
+// ORG_NAME labels the app ("WA Box · Acme Academy"). A local copy is labelled "Local copy".
+const LOCAL = process.env.WABOX_LOCAL === 'true';
+const ORG = String(process.env.ORG_NAME ?? '').trim().slice(0, 40);
+const escHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
-  .replace('<head>', `<head>\n  <base href="${BASE_PATH}/">`);
+  .replace('<head>', `<head>\n  <base href="${BASE_PATH}/">`)
+  .replace('{{ORG_TITLE}}', ORG ? ` · ${escHtml(ORG)}` : (LOCAL ? ' · Local copy' : ''))
+  .replace('{{ORG_GROUPS}}', ORG ? `${escHtml(ORG)}'s` : 'your')
+  .replace('{{ORG}}', LOCAL ? 'Local copy' : escHtml(ORG));
 app.get(['/', '/index.html'], (_req, res) => res.type('html').send(INDEX_HTML));
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, maxAge: 0 }));
 
@@ -129,7 +136,7 @@ api.get('/status', (req, res) => {
   res.json({
     wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, error: req.user.role === 'admin' ? s.wa.error : undefined },
     dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
-    quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: process.env.WABOX_LOCAL === 'true',
+    quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: LOCAL,
     sentToday: sched.sentToday(), issues: alerts.openIssues().length,
     running: running ? { ...running, group: s.currentGroup, nextSendAt: s.nextSendAt } : null,
     now: Date.now(), today: epochToIst(Date.now()).date,
@@ -478,6 +485,9 @@ app.use((err, _req, res, _next) => {
 
 auth.seedAdmin();
 if (getSetting('dry_run', null) === null) setSetting('dry_run', process.env.DRY_RUN !== 'false');
+// A copy running on someone's own computer always starts in practice mode, so trying WA Box
+// out (or restarting it) can never send a real message by surprise.
+if (LOCAL && !getSetting('dry_run', true)) { setSetting('dry_run', true); logEvent('info', 'local', 'Local copy started: practice mode switched back on'); }
 const server = app.listen(PORT, () => {
   console.log(`WA Box listening on :${PORT} (base path "${BASE_PATH || '/'}"), dry run: ${sched.settings().dryRun}`);
   sched.startLoop();

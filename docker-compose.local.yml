@@ -1,0 +1,79 @@
+# WA Box on your own computer.
+#
+#   1. cp .env.example .env      (or run scripts/setup.sh / scripts/setup.ps1, which also makes the keys)
+#   2. docker compose -f docker-compose.local.yml up -d --build
+#   3. open http://localhost:3000
+#
+# A local copy:
+#   - listens on this computer only (127.0.0.1), not your network
+#   - starts in practice mode every time, so nothing reaches WhatsApp until you press "Go live"
+#   - keeps its data in Docker volumes (wabox-local-*). `docker compose ... down` keeps them;
+#     `down -v` deletes them, including the WhatsApp login.
+name: wabox-local
+
+services:
+  engine:
+    build:
+      context: ./engine
+    restart: unless-stopped
+    stop_grace_period: 45s
+    environment:
+      - ENGINE_API_KEY=${WA_ENGINE_KEY:?Set WA_ENGINE_KEY in .env (scripts/setup.sh makes one)}
+      - TZ=${TZ:-Asia/Kolkata}
+      - HOME=/tmp
+      - XDG_CONFIG_HOME=/tmp/.config
+      - XDG_CACHE_HOME=/tmp/.cache
+      - CHROME_MAX_MB=${CHROME_MAX_MB:-1500}
+      - WA_WEB_VERSION=${WA_WEB_VERSION:-}
+    volumes:
+      - engine-data:/data
+    tmpfs:
+      - /tmp:size=512m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    shm_size: 256m
+    mem_limit: 2g
+
+  wabox:
+    build:
+      context: ./app
+    restart: unless-stopped
+    stop_grace_period: 40s
+    environment:
+      - PORT=3000
+      - BASE_PATH=/
+      - WA_ENGINE_URL=http://engine:3100
+      - WA_ENGINE_KEY=${WA_ENGINE_KEY}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ORG_NAME=${ORG_NAME:-}
+      - GROUP_KEYWORDS=${GROUP_KEYWORDS:-}
+      - DRY_RUN=true
+      - DAILY_CAP=${DAILY_CAP:-30}
+      - MAX_LATE_MINUTES=${MAX_LATE_MINUTES:-120}
+      - TZ=${TZ:-Asia/Kolkata}
+      # http://localhost has no HTTPS, so the sign-in cookie can't be "Secure" here.
+      - COOKIE_INSECURE=true
+      - WABOX_LOCAL=true
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - wabox-data:/data
+    depends_on:
+      - engine
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  engine-data:
+    name: wabox-local-engine
+  wabox-data:
+    name: wabox-local-data

@@ -51,6 +51,8 @@ services:
       # (SERVICE_PASSWORD_ADMIN). You must change it on first login.
       - ADMIN_USER=admin@example.com
       - ADMIN_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+      - ORG_NAME=Acme Academy
+      - GROUP_KEYWORDS=Cohort,Masterclass
       # Safe defaults. Practice mode can be switched off from Safety & settings by an admin.
       - DRY_RUN=true
       - DAILY_CAP=30

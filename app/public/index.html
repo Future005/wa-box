@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#ffffff">
-  <title>WA Box · Acme Academy</title>
+  <title>WA Box{{ORG_TITLE}}</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="fonts/schibsted-grotesk-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
@@ -16,7 +16,7 @@
     <form id="login-form" class="auth-card" autocomplete="on">
       <div class="mark-row"><span class="mark" aria-hidden="true"></span><span class="wordmark">WA Box</span></div>
       <h1>Sign in</h1>
-      <p class="sub">Schedule messages to your WhatsApp groups.</p>
+      <p class="sub">Schedule messages to {{ORG_GROUPS}} WhatsApp groups.</p>
       <label class="fld"><span>Email or username</span><input name="username" autocomplete="username" required autofocus></label>
       <label class="fld"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
       <p class="form-error" id="login-error" role="alert"></p>
@@ -48,7 +48,7 @@
 
     <aside class="rail" id="rail">
       <div class="rail-top">
-        <div class="mark-row"><span class="mark" aria-hidden="true"></span><span class="wordmark">WA Box</span><span class="org">Acme Academy</span></div>
+        <div class="mark-row"><span class="mark" aria-hidden="true"></span><span class="wordmark">WA Box</span><span class="org" id="org-label">{{ORG}}</span></div>
         <a class="btn btn-primary btn-block new-btn" href="#compose"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New message</a>
         <nav class="nav" aria-label="Main">
           <a href="#today" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"/></svg>Today</a>
@@ -313,7 +313,7 @@
           </div>
           <form class="panel" id="keywords-form">
             <h2 class="panel-title">Which groups show up</h2>
-            <label class="fld"><span>Group name contains</span><input name="keywords" placeholder="Cohort, Masterclass" autocomplete="off"><small>Comma-separated. Not case-sensitive. Leave empty to show every group.</small></label>
+            <label class="fld"><span>Group name contains</span><input name="keywords" placeholder="e.g. Cohort, Masterclass" autocomplete="off"><small>Comma-separated. Not case-sensitive. Leave empty to show every group.</small></label>
             <p class="hint" id="sync-detail"></p>
             <p class="form-error" id="keywords-error"></p>
             <div class="btn-row">
