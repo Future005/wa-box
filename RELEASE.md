@@ -21,7 +21,7 @@ Tick every box, in order.
 - [ ] `docs/API.md`: replace the `wabox.example.com` example address with `<your-wa-box>`.
 - [ ] Search and review every hit (keep the "Designed by Bhavishya" credit and LinkedIn link):
   ```bash
-  grep -rniE "acme|example\.com|info@|@acme|919[0-9]{9}|coolify\.example" --exclude-dir=node_modules .
+  grep -rniE "gateway|acme|example\.com|info@|@acme|919[0-9]{9}|coolify\.example" --exclude-dir=node_modules .
   ```
 - [ ] Screenshots in `docs/screenshots/` use sample group names ("Weekend Cohort 1"…) and a fake number. Retake them with neutral names if you prefer: run a local copy with `ORG_NAME=` and sample groups.
 - [ ] Make sure nothing secret or personal is present:
