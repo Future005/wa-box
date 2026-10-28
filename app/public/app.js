@@ -120,21 +120,37 @@
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
 
   // ---------- groups picker ----------
-  async function loadGroups(refresh = false) {
-    $('#groups-note').textContent = 'Loading groups…';
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  function syncNote(s) {
+    const kw = s.keywords.length ? `matching “${s.keywords.join('”, “')}”` : '(all groups)';
+    if (s.running) return `Syncing from WhatsApp… this can take a minute or two on a big account. You can keep working.`;
+    if (s.error) return `Last sync failed: ${s.error}`;
+    if (!s.finishedAt) return `Not synced yet. Press “Sync from WhatsApp” once WhatsApp is connected.`;
+    return `${s.saved} groups ${kw} · synced ${ago(s.finishedAt)}`;
+  }
+  async function loadGroups() {
     try {
-      const r = await api('groups' + (refresh ? '?refresh=1' : ''));
+      const r = await api('groups');
       state.groups = r.groups;
-      $('#groups-note').textContent = r.stale ? 'WhatsApp not connected — list may be out of date.' : `${r.groups.length} groups`;
+      state.groupSync = r.sync;
+      $('#groups-note').textContent = syncNote(r.sync);
+      $('#groups-refresh').disabled = r.sync.running;
+      clearTimeout(state.syncPoll);
+      if (r.sync.running) state.syncPoll = setTimeout(loadGroups, 4000);
     } catch (err) { $('#groups-note').textContent = err.message; }
     renderGroups();
+  }
+  async function syncGroups() {
+    try { await api('groups/sync', { method: 'POST' }); toast('Syncing groups from WhatsApp…'); }
+    catch (err) { toast(err.message, true); }
+    loadGroups();
   }
   function renderGroups() {
     const q = $('#group-search').value.trim().toLowerCase();
     const shown = state.groups.filter(g => !q || g.name.toLowerCase().includes(q));
     $('#group-list').innerHTML = shown.length
       ? shown.map(g => `<label><input type="checkbox" data-id="${esc(g.id)}" ${state.picked.has(g.id) ? 'checked' : ''}> ${esc(g.name)}</label>`).join('')
-      : `<div class="empty">${state.groups.length ? 'No group matches that search.' : 'No groups yet. Connect WhatsApp, then press “Refresh list”.'}</div>`;
+      : `<div class="empty">${state.groups.length ? 'No group matches that search.' : 'No saved groups yet. Connect WhatsApp, then press “Sync from WhatsApp”.'}</div>`;
     $('#group-chips').innerHTML = [...state.picked.values()].map(g => `<span class="chip">${esc(g.name)}<button type="button" data-remove="${esc(g.id)}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('');
     $('#group-picked').textContent = state.picked.size;
     updatePreview();
@@ -153,7 +169,7 @@
     renderGroups();
   });
   $('#groups-none').addEventListener('click', () => { state.picked.clear(); renderGroups(); });
-  $('#groups-refresh').addEventListener('click', () => loadGroups(true));
+  $('#groups-refresh').addEventListener('click', syncGroups);
 
   // ---------- job form ----------
   const form = $('#job-form');
@@ -359,7 +375,7 @@
         if (r.qrCode) { $('#qr-img').src = r.qrCode; $('#qr-wrap').classList.remove('hidden'); }
         else $('#qr-wrap').classList.add('hidden');
         await refreshStatus();
-        if (state.status.wa.status === 'ready') { clearInterval(state.qrTimer); toast('WhatsApp connected ✓'); loadWhatsapp(); loadGroups(true); }
+        if (state.status.wa.status === 'ready') { clearInterval(state.qrTimer); toast('WhatsApp connected ✓. Groups sync automatically in a minute or two.'); loadWhatsapp(); loadGroups(); }
       } catch { /* keep polling */ }
     };
     tick(); state.qrTimer = setInterval(tick, 4000);
@@ -408,6 +424,7 @@
     await refreshStatus();
     const s = state.status, f = $('#settings-form');
     f.dryRun.checked = s.dryRun; f.paused.checked = s.paused; f.dailyCap.value = s.dailyCap; f.maxLateMin.value = s.maxLateMin;
+    try { const g = await api('groups'); $('#keywords-form').keywords.value = g.sync.keywords.join(', '); } catch { /* ignore */ }
     try {
       const { audit } = await api('audit');
       $('#audit-table tbody').innerHTML = audit.map(a => `<tr><td>${esc(fmt(a.at))}</td><td>${esc(a.actor)}</td><td>${esc(a.action.replace(/_/g, ' '))} <span class="muted">${esc(a.detail)}</span></td></tr>`).join('');
@@ -423,6 +440,16 @@
       await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value) } });
       toast('Settings saved'); loadSettings();
     } catch (err) { $('#settings-error').textContent = err.message; }
+  });
+
+  $('#keywords-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('#keywords-error').textContent = '';
+    try {
+      const r = await api('groups/keywords', { method: 'PUT', body: { keywords: e.target.keywords.value } });
+      e.target.keywords.value = r.keywords.join(', ');
+      if (await confirmDialog('Keywords saved', `<p>Sync groups from WhatsApp now so the list matches ${r.keywords.length ? esc(r.keywords.join(', ')) : 'all groups'}?</p>`, 'Sync now')) syncGroups();
+    } catch (err) { $('#keywords-error').textContent = err.message; }
   });
 
   boot();

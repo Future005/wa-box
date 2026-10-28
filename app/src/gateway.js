@@ -74,9 +74,9 @@ async function logout() {
   return call('POST', `/sessions/${id}/logout`);
 }
 
-async function listGroups() {
+async function listGroups({ timeoutMs = 60000 } = {}) {
   const id = await ensureSession();
-  const groups = await call('GET', `/sessions/${id}/groups?limit=1000`);
+  const groups = await call('GET', `/sessions/${id}/groups?limit=1000`, undefined, { timeoutMs });
   const arr = Array.isArray(groups) ? groups : (groups?.data || []);
   return arr
     .filter(g => g && g.id && String(g.id).endsWith('@g.us'))

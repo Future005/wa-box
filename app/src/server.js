@@ -10,6 +10,7 @@ const { db, DATA_DIR, getSetting, setSetting, audit } = require('./db');
 const auth = require('./auth');
 const wa = require('./gateway');
 const sched = require('./scheduler');
+const savedGroups = require('./groups');
 const { istToEpoch, epochToIst, formatIst } = require('./time');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -121,16 +122,21 @@ api.get('/status', (req, res) => {
 });
 
 // ---------- groups ----------
-let groupCache = { at: 0, list: [] };
-async function groups(force = false) {
-  if (!force && Date.now() - groupCache.at < 5 * 60 * 1000 && groupCache.list.length) return groupCache.list;
-  const list = await wa.listGroups();
-  groupCache = { at: Date.now(), list };
-  return list;
-}
-api.get('/groups', wrap(async (req, res) => {
-  if (sched.state.wa.status !== 'ready') return res.json({ groups: groupCache.list, stale: true });
-  res.json({ groups: await groups(req.query.refresh === '1') });
+// Instant: reads the saved list, never asks WhatsApp.
+api.get('/groups', (_req, res) => res.json({ groups: savedGroups.list(), sync: savedGroups.status() }));
+// Background sync from WhatsApp (one read of the chat list WhatsApp Web already has).
+api.post('/groups/sync', wrap(async (req, res) => {
+  if (sched.state.wa.status !== 'ready') throw bad('WhatsApp is not connected yet');
+  const err = savedGroups.startSync(req.user.username);
+  if (err) throw bad(err);
+  res.json({ ok: true, sync: savedGroups.status() });
+}));
+api.put('/groups/keywords', requireAdmin, wrap(async (req, res) => {
+  const raw = req.body?.keywords;
+  const list = Array.isArray(raw) ? raw : String(raw || '').split(',');
+  const kws = savedGroups.setKeywords(list);
+  audit(req.user.username, 'group_keywords', kws.join(', ') || '(all groups)');
+  res.json({ ok: true, keywords: kws });
 }));
 
 // ---------- jobs ----------
@@ -162,12 +168,9 @@ async function validateJobInput(body, { requireFuture = true } = {}) {
   if (typeof groupIds === 'string') { try { groupIds = JSON.parse(groupIds); } catch { groupIds = [groupIds]; } }
   if (!Array.isArray(groupIds) || !groupIds.length) throw bad('Pick at least one group');
   if (groupIds.length > 50) throw bad('Max 50 groups per job');
-  let known;
-  try { known = await groups(); } catch { known = groupCache.list; }
-  const byId = new Map(known.map(g => [g.id, g]));
   const chosen = [...new Set(groupIds.map(String))].map(id => {
-    const g = byId.get(id);
-    if (!g) throw bad('One of the selected groups is not in your WhatsApp group list. Refresh groups and try again.');
+    const g = savedGroups.get(id);
+    if (!g) throw bad('One of the selected groups is no longer in the saved group list. Sync groups and try again.');
     return { id: g.id, name: g.name };
   });
 

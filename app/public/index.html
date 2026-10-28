@@ -74,10 +74,10 @@
             <div class="field-head">
               <span>Groups</span>
               <span class="muted small"><span id="group-picked">0</span> selected ·
-                <button type="button" class="link" id="groups-refresh">Refresh list</button></span>
+                <button type="button" class="link" id="groups-refresh">Sync from WhatsApp</button></span>
             </div>
             <div id="group-chips" class="chips"></div>
-            <input id="group-search" type="search" placeholder="Search your WhatsApp groups…" autocomplete="off">
+            <input id="group-search" type="search" placeholder="Search saved groups…" autocomplete="off">
             <div id="group-list" class="group-list"></div>
             <div class="row small">
               <button type="button" class="link" id="groups-all">Select all shown</button>
@@ -215,6 +215,15 @@
 
       <!-- Settings (admin) -->
       <section class="tab hidden" id="tab-settings">
+        <form class="card" id="keywords-form">
+          <div class="card-head"><h2>Which groups to show</h2></div>
+          <label>Group name keywords <span class="muted">(comma-separated, not case-sensitive)</span>
+            <input name="keywords" placeholder="Cohort, Masterclass" autocomplete="off">
+          </label>
+          <p class="muted small">Only groups whose name contains one of these words are saved and shown in the picker. Leave empty to keep every group. After saving, press “Sync from WhatsApp” on the Schedule tab.</p>
+          <p class="form-error" id="keywords-error"></p>
+          <div class="row end"><button class="btn primary" type="submit">Save keywords</button></div>
+        </form>
         <form class="card" id="settings-form">
           <div class="card-head"><h2>Sending safety</h2></div>
           <label class="toggle"><input type="checkbox" name="dryRun"><span><b>Dry run</b> — log what would be sent, but send nothing.</span></label>

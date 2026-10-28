@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { db, DATA_DIR, getSetting, audit } = require('./db');
 const wa = require('./gateway');
+const savedGroups = require('./groups');
 const { istDayKey, nextIstMidnight, nextWeeklyOccurrence } = require('./time');
 
 const HARD_MIN_GAP_S = 30;          // never two sends closer than this
@@ -50,6 +51,17 @@ async function refreshWa() {
     }
   } catch (e) {
     state.wa = { status: 'unreachable', phone: null, pushName: null, error: e.message, checkedAt: Date.now() };
+  }
+  // First time WhatsApp is connected and nothing is saved yet: one automatic sync,
+  // after a short wait so WhatsApp Web can finish loading chats.
+  if (state.wa.status === 'ready') {
+    if (!state.readySince) state.readySince = Date.now();
+    if (!state.autoSynced && savedGroups.count() === 0 && Date.now() - state.readySince > 90 * 1000) {
+      state.autoSynced = true;
+      savedGroups.startSync('system');
+    }
+  } else {
+    state.readySince = 0;
   }
   return state.wa.status === 'ready';
 }
@@ -126,13 +138,8 @@ async function runJob(job) {
   state.runningJobId = job.id;
   db.prepare("UPDATE jobs SET status='running', note='', updated_at=? WHERE id=?").run(Date.now(), job.id);
 
-  let live;
-  try { live = new Map((await wa.listGroups()).map(g => [g.id, g])); }
-  catch (e) {
-    db.prepare("UPDATE jobs SET status='scheduled', note=? WHERE id=?").run('Could not read group list, will retry: ' + e.message, job.id);
-    return;
-  }
-
+  // No live group-list read before sending: we use the saved list. If the number has
+  // since left a group, WhatsApp rejects that one send and it is recorded as failed.
   const groups = JSON.parse(job.groups_json);
   const gapMin = Math.max(HARD_MIN_GAP_S, job.gap_min);
   const gapMax = Math.max(gapMin, job.gap_max);
@@ -142,8 +149,8 @@ async function runJob(job) {
     if (existing && ['sent', 'dry_run', 'skipped', 'missed'].includes(existing.status)) continue;
     if (existing && existing.status === 'failed' && existing.attempts >= 2) continue;
 
-    if (!live.has(group.id)) {
-      upsertSend(job, group, { status: 'skipped', error: 'This WhatsApp number is not a member of the group' });
+    if (!savedGroups.get(group.id)) {
+      upsertSend(job, group, { status: 'skipped', error: 'Group is no longer in the saved list (left it, renamed, or no longer matches the keywords)' });
       continue;
     }
 

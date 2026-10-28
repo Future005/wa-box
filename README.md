@@ -19,7 +19,8 @@ Only `wabox` is public. Gateway has no domain and no published port.
    (app → Environment Variables). You must change it on first login.
 2. **WhatsApp tab (admins):** press *Connect / show QR*, then on the phone: WhatsApp → Settings → Linked devices → Link a device → scan.
    Use a spare number if you can.
-3. **Schedule tab:** pick groups, write the message (optional image), choose date + time (IST), optional weekly repeat,
+3. **Groups:** only groups whose name contains your keywords (default *Acme Academy*, *Masterclass*; change in Settings) are saved. The list is read from WhatsApp only when someone presses *Sync from WhatsApp* (plus once automatically after connecting), so the picker loads instantly.
+4. **Schedule tab:** pick groups, write the message (optional image), choose date + time (IST), optional weekly repeat,
    and the random gap range. The preview shows when the last group will get it.
 4. **Upcoming:** edit, *Send now*, or cancel. Live per-group progress.
 5. **History:** every group, every send, with errors.
