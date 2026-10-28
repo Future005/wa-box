@@ -3,6 +3,9 @@
 What to do when something goes wrong. Everything below is done at **wabox.example.com/wabox** unless it says Coolify.
 
 ## Where to look first
+
+<img src="docs/media/alerts.gif" alt="Alerts in the team channel: morning check-in, done note, and a warning when WhatsApp needs attention" width="640">
+
 **System & logs** (admins) shows, in this order:
 1. **Health**: scheduler, WhatsApp, sending mode, last 24 h.
 2. **Needs your decision**: sends where WA Box couldn't confirm the result.

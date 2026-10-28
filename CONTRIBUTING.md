@@ -20,6 +20,10 @@ cd ../engine && npm ci && npm test  # engine tests
 
 To run it: `sh scripts/setup.sh` (or `scripts\setup.ps1` on Windows). It starts in practice mode, so nothing reaches WhatsApp.
 
+<img src="docs/media/install.gif" alt="Running sh scripts/setup.sh" width="640">
+
+The README animations live in `media/` (HyperFrames). If you change something they show, re-render them: see [media/README.md](media/README.md).
+
 ## Making a change
 
 1. Read [AGENTS.md](AGENTS.md): the code map and the rules every change must keep (the send contract, write-ahead records, `createJob()` as the only way to schedule, no inline styles).

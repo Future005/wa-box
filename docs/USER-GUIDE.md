@@ -2,6 +2,8 @@
 
 For everyone on the team who writes and schedules messages. Admins: the last sections are for you.
 
+<img src="media/hero.gif" alt="Busy at 9 AM with reminders for different groups; in WA Box each message is scheduled once, repeats weekly and goes out on time" width="900">
+
 - [Signing in](#signing-in)
 - [The Today page](#the-today-page)
 - [Writing a message](#writing-a-message)
@@ -58,6 +60,8 @@ practice mode. The page refreshes itself; while something is sending it updates 
 The phone on the right shows the message exactly as WhatsApp will. Use the arrows above it to see
 what each group gets (useful with `{group}`).
 
+<img src="media/per-group.gif" alt="One message to a list; each group gets its own name and the right day" width="640">
+
 ## Choosing when
 
 - **Date and time** are India time. Quick buttons for today, tomorrow and the next days.
@@ -70,7 +74,11 @@ what each group gets (useful with `{group}`).
 
 Below, it tells you when the last group will get it.
 
+<img src="media/repeat.gif" alt="Picking a list fills in its usual time; repeat every Saturday and Sunday fills the coming weeks" width="640">
+
 ## Before you press Schedule
+
+<img src="media/date-check.gif" alt="The date check notices the text says today and Saturday but it sends on Friday, and fixes it" width="640">
 
 The checks under the preview catch common mistakes:
 
@@ -112,6 +120,8 @@ Messages scheduled by an outside tool through the API show the tool's name, e.g.
 Filter to **Problems** to see only what needs attention. Click a row for the full message.
 
 ## When something didn't go
+
+<img src="media/never-twice.gif" alt="WhatsApp's reply is lost; WA Box checks the chat, finds the message and does not send it again" width="640">
 
 | Status | What happened | What to do |
 |---|---|---|
@@ -166,6 +176,8 @@ without the phone. Use a number that has been active for a while.
 - **Duplicate guard**: how long the same text is blocked for the same group.
 - **Quiet hours**: writers get a warning when scheduling into them.
 - **Alerts**: a Slack / Google Chat / Discord webhook, and/or WhatsApp numbers to message. Choose the morning check-in and "done" notes. Press **Send a test alert**.
+
+<img src="media/alerts.gif" alt="The team channel gets a morning check-in, a done note, and a warning when WhatsApp needs attention" width="640">
 
 ### Team
 

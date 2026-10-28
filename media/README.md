@@ -39,3 +39,7 @@ ffmpeg -i out/api.mp4  -vf "fps=15,scale=900:-1:flags=lanczos,split[a][b];[a]pal
 
 Rules from HyperFrames: one paused GSAP timeline registered on `window.__timelines`, every timed element has
 `data-start` and `data-duration`, and nothing random or time-based, so every render is identical.
+
+## Social preview
+
+`social.html` is the 1280×640 card GitHub shows when the repo link is shared (LinkedIn, Slack, X). Output: `docs/media/social-preview.png`. Upload it in the repo's **Settings → General → Social preview**.
