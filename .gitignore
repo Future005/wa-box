@@ -7,3 +7,5 @@ data/
 !.env.example
 .DS_Store
 !.env.example
+media/out/
+media/.hyperframes/

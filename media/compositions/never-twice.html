@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: WhatsApp's reply is lost. WA Box checks the group chat instead of resending. -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .log { left: 70px; top: 160px; width: 600px; padding: 26px 28px; }
+  .log h4 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 14px; display: flex; justify-content: space-between; }
+  .log h4 small { font-size: 17px; color: var(--ink-3); font-weight: 600; }
+  .ev { display: flex; gap: 14px; align-items: center; padding: 13px 0; border-top: 1px solid var(--line); font-size: 21px; opacity: 0; }
+  .ev .t { width: 64px; color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 600; }
+  .ev .m { flex: 1; font-weight: 600; }
+  .phone { position: absolute; left: 745px; top: 140px; width: 370px; height: 470px; border-radius: 48px; background: #0e1f1d; padding: 11px; box-shadow: 0 40px 80px -40px rgba(14,31,29,.45); }
+  .screen { width: 100%; height: 100%; border-radius: 38px; overflow: hidden; background: var(--chat); position: relative; }
+  .bar { height: 104px; background: var(--teal); color: #fff; padding: 46px 22px 0; display: flex; gap: 12px; align-items: center; }
+  .bar .av { width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,.22); display: grid; place-items: center; font-weight: 800; font-size: 18px; }
+  .bar b { font-size: 22px; font-weight: 700; }
+  .bubble { position: absolute; right: 16px; top: 130px; width: 290px; background: var(--bubble); border-radius: 16px 5px 16px 16px; padding: 14px 16px 10px; font-size: 20px; line-height: 1.35; color: #111b21; }
+  .meta { display: flex; justify-content: flex-end; gap: 6px; font-size: 14px; color: #667781; margin-top: 4px; }
+  .lens { position: absolute; left: 0; top: 0; width: 130px; height: 130px; border-radius: 50%; border: 8px solid var(--teal); background: rgba(127,224,211,.12); opacity: 0; }
+  .lens::after { content: ""; position: absolute; width: 60px; height: 10px; border-radius: 5px; background: var(--teal); right: -46px; bottom: -14px; transform: rotate(45deg); }
+  .found { position: absolute; left: 16px; right: 16px; top: 270px; text-align: center; opacity: 0; }
+  .spin { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--teal); }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="never-twice" data-start="0" data-duration="7" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>Lost connection? It checks the chat. It never guesses.</b></div>
+
+  <div class="card log">
+    <h4>Event log <small>Weekend Cohort 4</small></h4>
+    <div class="ev e1"><span class="t">9:04</span><span class="m">Sending…</span><span class="pill wait">Sending</span></div>
+    <div class="ev e2"><span class="t">9:05</span><span class="m">No reply from WhatsApp</span><span class="pill warn">Unclear</span></div>
+    <div class="ev e3"><span class="t">9:05</span><span class="m">Checking the group chat</span><span class="pill wait"><span class="spin" id="spin"></span>Checking</span></div>
+    <div class="ev e4"><span class="t">9:05</span><span class="m">Found it. Marked sent, not resent.</span><span class="pill ok">✓ Sent once</span></div>
+  </div>
+
+  <div class="phone">
+    <div class="screen">
+      <div class="bar"><span class="av">4</span><b>Weekend Cohort 4</b></div>
+      <div class="bubble" id="bub"><b>Saturday class at 11 AM</b> 👋<br>See you there!<div class="meta">9:04 ✓✓</div></div>
+      <div class="lens" id="lens"></div>
+      <div class="found" id="found"><span class="pill ok">✓ Already in the chat: 1 message</span></div>
+    </div>
+  </div>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.log', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  tl.from('.phone', { x: 50, opacity: 0, duration: 0.5 }, 0.2);
+  tl.from('#bub', { y: 20, opacity: 0, scale: 0.96, duration: 0.35, ease: 'back.out(1.6)' }, 0.9);
+  tl.fromTo('.e1', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3 }, 0.6);
+  tl.fromTo('.e2', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3 }, 1.6);
+  tl.fromTo('.e3', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3 }, 2.4);
+  tl.fromTo('#spin', { rotation: 0 }, { rotation: 720, duration: 1.4, ease: 'none' }, 2.4);
+  tl.fromTo('#lens', { opacity: 0, x: 40, y: 260, scale: 0.8 }, { opacity: 1, x: 120, y: 110, scale: 1, duration: 0.6 }, 2.5);
+  tl.to('#lens', { x: 190, duration: 0.5, ease: 'sine.inOut' }, 3.1);
+  tl.fromTo('.e4', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3 }, 3.8);
+  tl.to('#lens', { opacity: 0, duration: 0.3 }, 3.9);
+  tl.fromTo('#found', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35 }, 3.9);
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 6.7);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['never-twice'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>

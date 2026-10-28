@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200, height=640" />
+<!-- README loop: the date sense-check catches "today" + "Saturday" on a Friday send, then Fix. -->
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<link rel="stylesheet" href="../assets/loop.css" />
+<style>
+  .ed { left: 70px; top: 170px; width: 640px; padding: 28px 30px; display: grid; gap: 22px; align-content: start; }
+  .editor { border: 2px solid var(--teal-2); border-radius: 16px; padding: 18px 20px; font-size: 24px; line-height: 1.45; height: 150px; }
+  .editor b { font-weight: 750; }
+  .hl { background: #fff1c2; border-radius: 4px; padding: 0 2px; }
+  .row { display: flex; gap: 12px; }
+  .stack { position: relative; display: inline-block; width: 150px; height: 28px; }
+  .stack span { position: absolute; left: 0; top: 0; white-space: nowrap; }
+  .flash { position: absolute; inset: -2px; border-radius: 13px; border: 3px solid var(--teal); opacity: 0; }
+  .side { left: 750px; top: 170px; width: 380px; min-height: 250px; padding: 26px; display: grid; gap: 14px; }
+  .side h4 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
+  .fix { margin-left: auto; align-self: center; height: 40px; padding: 0 18px; border-radius: 20px; background: var(--paper); border: 1px solid #e6cf9a; color: var(--amber); font-size: 18px; font-weight: 800; display: inline-flex; align-items: center; }
+  .warnwrap, .okwrap { position: relative; }
+  .okwrap { position: absolute; left: 26px; right: 26px; top: 66px; opacity: 0; }
+</style>
+</head>
+<body>
+<div class="stage" id="root" data-composition-id="date-check" data-start="0" data-duration="6" data-width="1200" data-height="640">
+  <div class="cap"><img src="../assets/mark.svg" alt=""><b>Catches the wrong day before it goes out.</b></div>
+
+  <div class="card ed">
+    <div>
+      <div class="lbl">Message</div>
+      <div class="editor"><b>Saturday class</b> starts <span class="hl h1">today</span> at 11 AM 👋<br>See you there, {group}!</div>
+    </div>
+    <div>
+      <div class="lbl">When</div>
+      <div class="row">
+        <span class="field" id="date">📅 <span class="stack"><span id="d1">Fri, 30 Oct</span><span id="d2" style="opacity:0">Sat, 31 Oct</span></span><span class="flash" id="dflash"></span></span>
+        <span class="field">🕘 09:00</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card side" id="side">
+    <h4>Before you send</h4>
+    <div class="warnwrap" id="warn">
+      <div class="check warn"><svg viewBox="0 0 24 24"><path d="M12 4 3 20h18z"/><path d="M12 10v4M12 17h.01"/></svg><span>Says “today” and “Saturday”, but it sends on <b>Friday</b>.</span></div>
+      <div class="row" style="margin-top: 12px;"><span class="fix" id="fix">Fix: move to Saturday</span></div>
+    </div>
+    <div class="okwrap" id="ok">
+      <div class="check ok"><svg viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></svg><span>The date matches the message.</span></div>
+    </div>
+  </div>
+
+  <svg class="cursor" id="cur" viewBox="0 0 24 24"><path d="M4 2l15 9.5-6.6 1.4L9.6 20z" fill="#0e1f1d" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <div class="fade" id="fade"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.3, ease: 'none' }, 0);
+  tl.from('.ed', { y: 30, opacity: 0, duration: 0.5 }, 0.05);
+  tl.from('#side', { x: 40, opacity: 0, duration: 0.5 }, 0.5);
+  tl.from('#warn', { y: 16, opacity: 0, duration: 0.4 }, 0.9);
+  tl.fromTo('.h1', { backgroundColor: 'rgba(255,241,194,0)' }, { backgroundColor: 'rgba(255,241,194,1)', duration: 0.3 }, 1.0);
+  tl.fromTo('#cur', { x: 1150, y: 700, opacity: 0 }, { x: 905, y: 330, opacity: 1, duration: 0.6, ease: 'power2.inOut' }, 1.8);
+  tl.to('#cur', { scale: 0.85, duration: 0.06, yoyo: true, repeat: 1 }, 2.45);
+  tl.to('#fix', { scale: 0.95, duration: 0.06, yoyo: true, repeat: 1 }, 2.45);
+  tl.to('#d1', { y: -20, opacity: 0, duration: 0.25 }, 2.6);
+  tl.fromTo('#d2', { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3 }, 2.65);
+  tl.fromTo('#dflash', { opacity: 0 }, { opacity: 1, duration: 0.15, yoyo: true, repeat: 3 }, 2.65);
+  tl.to('#warn', { opacity: 0, y: -10, duration: 0.25 }, 2.8);
+  tl.fromTo('#ok', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35 }, 2.95);
+  tl.to('.h1', { backgroundColor: 'rgba(233,247,239,1)', duration: 0.3 }, 2.95);
+  tl.to('#cur', { opacity: 0, duration: 0.3 }, 3.4);
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 5.7);
+  window.__timelines = window.__timelines || {};
+  window.__timelines['date-check'] = tl;
+  tl.seek(0);
+</script>
+</body>
+</html>

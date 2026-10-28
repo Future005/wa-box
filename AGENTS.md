@@ -103,6 +103,7 @@ engine/                    WhatsApp engine (whatsapp-web.js + Chrome)
   src/server.js            Private HTTP API (X-API-Key)
   test/engine.test.js      Fake WhatsApp client
 docs/                      API.md, USER-GUIDE.md, screenshots, logo
+media/                     README animations (HyperFrames source); outputs in docs/media/
 scripts/                   setup.sh, setup.ps1
 docker-compose.yml         Production (Coolify)
 docker-compose.local.yml   Local copy (localhost only, always practice mode)

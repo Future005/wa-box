@@ -1,0 +1,14 @@
+{
+  "name": "wabox-media",
+  "private": true,
+  "type": "module",
+  "description": "WA Box README animations and launch video (HyperFrames). See media/README.md.",
+  "scripts": {
+    "preview": "npx --yes hyperframes@0.8.212 preview",
+    "check": "npx --yes hyperframes@0.8.212 check",
+    "render": "npx --yes hyperframes@0.8.212 render -q delivery -o out/hero.mp4"
+  },
+  "dependencies": {
+    "gsap": "3.14.2"
+  }
+}

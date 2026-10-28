@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<!-- WA Box README hero: 14 s loop. Before (copy-paste into 15 groups) -> write once -> sends like a person -> end card. -->
+<script src="node_modules/gsap/dist/gsap.min.js"></script>
+<style>
+  @font-face { font-family: "Schibsted Grotesk"; src: url("assets/schibsted-grotesk-latin-wght-normal.woff2") format("woff2"); font-weight: 400 900; }
+  :root {
+    --paper: #ffffff; --wash: #f4f7f6; --line: #e3e9e7; --line-2: #d3dcd9;
+    --ink: #0e1f1d; --ink-2: #4a5a57; --ink-3: #66746f;
+    --teal: #0b6e6e; --teal-2: #4fc2b8; --mint: #7fe0d3; --teal-wash: #e6f4f2;
+    --red: #c4372b; --red-wash: #fdecea; --bubble: #d9fdd3; --chat: #efeae2; --blue: #34b7f1;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); }
+  body { font-family: "Schibsted Grotesk", system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  #root { position: relative; width: 1920px; height: 1080px; overflow: hidden;
+    background: radial-gradient(1200px 700px at 85% 10%, #eef8f6 0%, rgba(255,255,255,0) 60%), var(--paper); }
+  .clip { position: absolute; inset: 0; }
+
+  /* ---------- shared ---------- */
+  .kicker { font-size: 26px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--teal); }
+  .h { font-size: 92px; line-height: 1.02; font-weight: 800; letter-spacing: -.045em; }
+  .sub { font-size: 34px; line-height: 1.3; color: var(--ink-2); font-weight: 500; letter-spacing: -.01em; }
+  .copy { position: absolute; left: 130px; top: 250px; width: 980px; display: grid; gap: 26px; }
+  .line { display: block; }
+  #C .copy { width: 620px; }
+  .brand { position: absolute; left: 130px; top: 84px; display: flex; align-items: center; gap: 16px; font-size: 34px; font-weight: 800; letter-spacing: -.04em; }
+  .brand img { width: 52px; height: 52px; }
+
+  .phone { position: absolute; width: 470px; height: 930px; top: 75px; border-radius: 64px; background: #0e1f1d; padding: 14px;
+    box-shadow: 0 50px 90px -40px rgba(14,31,29,.45), 0 0 0 1px rgba(14,31,29,.08); }
+  .screen { width: 100%; height: 100%; border-radius: 52px; overflow: hidden; background: var(--paper); position: relative; }
+  .bar { height: 150px; background: var(--teal); color: #fff; padding: 64px 30px 0; display: flex; align-items: center; gap: 16px; }
+  .bar b { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .bar small { display: block; font-size: 20px; opacity: .8; font-weight: 500; }
+  .av { width: 58px; height: 58px; border-radius: 50%; background: #cfe6e2; flex: none; display: grid; place-items: center; color: var(--teal); font-weight: 800; font-size: 22px; }
+  .bar .av { width: 54px; height: 54px; background: rgba(255,255,255,.22); color: #fff; }
+
+  /* ---------- A: before ---------- */
+  .rows { padding: 6px 0; }
+  .row { display: flex; gap: 16px; align-items: center; padding: 15px 26px; border-bottom: 1px solid var(--line); position: relative; }
+  .row .t { flex: 1; min-width: 0; }
+  .row b { display: block; font-size: 25px; font-weight: 650; letter-spacing: -.015em; }
+  .row .pv { display: block; font-size: 21px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 28px; position: relative; }
+  .row .pv i { font-style: normal; position: absolute; left: 0; top: 0; right: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+  .row .tm { font-size: 19px; color: var(--ink-3); align-self: flex-start; margin-top: 6px; }
+  .flash { position: absolute; inset: 0; background: var(--teal-wash); opacity: 0; }
+  .paste { position: absolute; right: 22px; top: 50%; margin-top: -22px; height: 44px; padding: 0 18px; border-radius: 22px; background: var(--ink); color: #fff; font-size: 20px; font-weight: 700; display: grid; place-items: center; opacity: 0; }
+  .meter { position: absolute; left: 130px; top: 770px; display: flex; gap: 22px; align-items: center; }
+  .pill { height: 76px; border-radius: 38px; padding: 0 30px; display: inline-flex; align-items: center; gap: 14px; font-size: 32px; font-weight: 750; letter-spacing: -.02em; background: var(--wash); border: 1px solid var(--line); position: relative; }
+  .stack { position: relative; display: inline-block; min-width: 92px; height: 40px; }
+  .stack span { position: absolute; left: 0; top: 0; opacity: 0; font-variant-numeric: tabular-nums; }
+  .pill.clock { background: var(--red-wash); border-color: #f6c9c3; color: var(--red); }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: currentColor; }
+
+  /* ---------- B: write once ---------- */
+  .win { position: absolute; left: 820px; top: 120px; width: 980px; height: 850px; border-radius: 30px; background: var(--paper); border: 1px solid var(--line);
+    box-shadow: 0 60px 120px -50px rgba(14,31,29,.35); overflow: hidden; }
+  .chrome { height: 70px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 0 26px; background: #fbfcfc; }
+  .chrome i { width: 15px; height: 15px; border-radius: 50%; background: var(--line-2); }
+  .chrome .ttl { margin-left: 18px; display: flex; gap: 12px; align-items: center; font-weight: 800; font-size: 24px; letter-spacing: -.03em; }
+  .chrome img { width: 32px; height: 32px; }
+  .wbody { padding: 34px 40px; display: grid; gap: 30px; }
+  .lbl { font-size: 22px; font-weight: 700; color: var(--ink-2); margin-bottom: 14px; }
+  .chips { display: flex; gap: 14px; }
+  .chip { height: 60px; padding: 0 24px; border-radius: 30px; border: 1px solid var(--line-2); display: inline-flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 650; position: relative; }
+  .chip small { font-size: 19px; color: var(--ink-3); font-weight: 700; position: relative; }
+  .chip .on { position: absolute; inset: -1px; border-radius: 30px; background: var(--teal-wash); border: 2px solid var(--teal); opacity: 0; }
+  .chip span { position: relative; }
+  .editor { border: 2px solid var(--teal-2); border-radius: 18px; padding: 22px 26px; height: 230px; font-size: 30px; line-height: 1.45; position: relative; }
+  .editor .ph { position: absolute; left: 26px; top: 22px; color: var(--ink-3); }
+  .caret { display: inline-block; width: 3px; height: 34px; background: var(--teal); vertical-align: -6px; margin-left: 2px; }
+  .when { display: flex; gap: 14px; align-items: center; }
+  .field { height: 64px; border: 1px solid var(--line-2); border-radius: 14px; padding: 0 22px; display: inline-flex; align-items: center; gap: 12px; font-size: 25px; font-weight: 650; }
+  .btn { height: 66px; padding: 0 34px; border-radius: 33px; background: var(--teal); color: #fff; font-size: 26px; font-weight: 750; display: inline-flex; align-items: center; margin-left: auto; position: relative; }
+  .btn .ok { position: absolute; inset: 0; border-radius: 33px; background: #0a5c5c; display: grid; place-items: center; opacity: 0; }
+  .cursor { position: absolute; width: 44px; height: 44px; left: 0; top: 0; z-index: 20; filter: drop-shadow(0 4px 6px rgba(0,0,0,.25)); }
+  .toast { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--ink); color: #fff; border-radius: 16px; height: 70px; padding: 0 28px; display: flex; align-items: center; gap: 16px; font-size: 24px; font-weight: 600; opacity: 0; white-space: nowrap; }
+  .toast b { color: var(--mint); }
+
+  /* ---------- C: sends like a person ---------- */
+  .plan { position: absolute; left: 790px; top: 210px; width: 540px; border-radius: 26px; border: 1px solid var(--line); background: var(--paper); padding: 28px 30px; box-shadow: 0 40px 90px -50px rgba(14,31,29,.35); }
+  .plan h4 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; display: flex; justify-content: space-between; margin-bottom: 18px; }
+  .plan h4 small { font-size: 20px; color: var(--ink-3); font-weight: 600; }
+  .prow { display: flex; align-items: center; gap: 16px; height: 62px; font-size: 23px; position: relative; }
+  .prow .tm { width: 92px; color: var(--ink-3); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .node { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--teal-2); background: var(--paper); position: relative; flex: none; }
+  .node::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--teal); transform: scale(var(--f, 0)); }
+  .prow .nm { font-weight: 600; white-space: nowrap; }
+  .prow .st { margin-left: auto; font-size: 18px; font-weight: 750; color: #146c43; background: #e9f7ef; border-radius: 14px; padding: 4px 12px; opacity: 0; }
+  .gap { position: absolute; left: 790px; height: 46px; border-radius: 23px; padding: 0 18px; background: #fff7e6; color: #8a5a00; border: 1px solid #f3dfb5; font-size: 24px; font-weight: 700; display: inline-flex; align-items: center; gap: 10px; opacity: 0; height: 56px; border-radius: 28px; }
+  .chat { background: var(--chat); position: absolute; inset: 150px 0 0 0; padding: 30px 22px; }
+  .bubble { position: absolute; right: 22px; width: 390px; background: var(--bubble); border-radius: 20px 6px 20px 20px; padding: 18px 20px 14px; font-size: 27px; line-height: 1.38; color: #111b21; box-shadow: 0 1px 1px rgba(0,0,0,.08); opacity: 0; }
+  .bubble b { font-weight: 750; }
+  .meta { display: flex; justify-content: flex-end; align-items: center; gap: 6px; font-size: 17px; color: #667781; margin-top: 6px; }
+  .tick { width: 30px; height: 18px; position: relative; }
+  .tick svg { position: absolute; inset: 0; }
+  .grp { position: absolute; left: 30px; right: 30px; top: 58px; display: flex; gap: 16px; align-items: center; color: #fff; }
+  .grp b { font-size: 29px; font-weight: 700; letter-spacing: -.02em; }
+  .grp small { display: block; font-size: 19px; opacity: .8; }
+  .guards { position: absolute; left: 130px; top: 720px; display: grid; gap: 16px; }
+  .guard { height: 64px; border-radius: 32px; padding: 0 26px 0 18px; background: var(--paper); border: 1px solid var(--line-2); display: inline-flex; align-items: center; gap: 14px; font-size: 27px; font-weight: 700; letter-spacing: -.015em; opacity: 0; width: max-content; }
+  .guard i { width: 36px; height: 36px; border-radius: 50%; background: var(--teal-wash); display: grid; place-items: center; }
+  .guard svg { width: 22px; height: 22px; stroke: var(--teal); fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- D: end card ---------- */
+  .end { display: grid; place-items: center; align-content: center; gap: 30px; text-align: center; }
+  .end img { width: 190px; height: 190px; }
+  .end .name { font-size: 132px; font-weight: 820; letter-spacing: -.055em; line-height: 1; }
+  .end .tag { font-size: 46px; font-weight: 600; letter-spacing: -.02em; color: var(--ink-2); }
+  .end .tag b { color: var(--teal); }
+  .end .meta2 { margin-top: 10px; font-size: 26px; color: var(--ink-3); font-weight: 600; letter-spacing: .02em; }
+  .fade { position: absolute; inset: 0; background: var(--paper); opacity: 0; z-index: 50; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="14" data-width="1920" data-height="1080">
+
+  <!-- ================= A. Before ================= -->
+  <section id="A" class="clip" data-start="0" data-duration="3.4" data-track-index="0">
+    <div class="copy">
+      <span class="kicker a-k">Saturday · 8:58 AM</span>
+      <div class="h"><span class="line a-l1">15 groups.</span><span class="line a-l2">Same message.</span><span class="line a-l3">Every weekend.</span></div>
+    </div>
+    <div class="meter">
+      <div class="pill a-count">Pasted <span class="stack" id="cnt"></span></div>
+      <div class="pill clock a-clock"><span class="dot"></span><span class="stack" id="clk"></span></div>
+    </div>
+    <div class="phone a-phone" style="left: 1250px;">
+      <div class="screen">
+        <div class="bar"><b>Chats</b></div>
+        <div class="rows" id="arows"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= B. Write once ================= -->
+  <section id="B" class="clip" data-start="3.4" data-duration="3.2" data-track-index="0">
+    <div class="brand b-brand"><img src="assets/mark.svg" alt="">WA Box</div>
+    <div class="copy">
+      <span class="kicker b-k">With WA Box</span>
+      <div class="h b-h">Write it<br>once.</div>
+      <p class="sub b-s">Pick a list, pick a time.<br>That's it.</p>
+    </div>
+    <div class="win b-win">
+      <div class="chrome"><i></i><i></i><i></i><span class="ttl"><img src="assets/mark.svg" alt="">New message</span></div>
+      <div class="wbody">
+        <div>
+          <div class="lbl">Groups</div>
+          <div class="chips">
+            <span class="chip"><span>Thu–Fri batch</span><small>5</small></span>
+            <span class="chip" id="wk"><span class="on b-on"></span><span>Weekend cohorts</span><small>15</small></span>
+            <span class="chip"><span>Alumni</span><small>3</small></span>
+          </div>
+        </div>
+        <div>
+          <div class="lbl">Message</div>
+          <div class="editor"><span class="ph b-ph">Write your message…</span><span id="typed"></span><span class="caret b-caret"></span></div>
+        </div>
+        <div class="when">
+          <span class="field">📅 Sat, 31 Oct</span><span class="field">🕘 09:00</span>
+          <span class="btn" id="go">Schedule for Sat, 9:00<span class="ok b-ok">✓ Scheduled</span></span>
+        </div>
+      </div>
+      <div class="toast b-toast">Scheduled for <b>15 groups</b> · Undo</div>
+    </div>
+    <svg class="cursor b-cur" viewBox="0 0 24 24"><path d="M4 2l15 9.5-6.6 1.4L9.6 20z" fill="#0e1f1d" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  </section>
+
+  <!-- ================= C. Sends like a person ================= -->
+  <section id="C" class="clip" data-start="6.6" data-duration="4.8" data-track-index="0">
+    <div class="brand"><img src="assets/mark.svg" alt="">WA Box</div>
+    <div class="copy">
+      <span class="kicker">Saturday · 9:00 AM</span>
+      <div class="h c-h">Sends it like<br>a person<br>would.</div>
+    </div>
+    <div class="guards">
+      <span class="guard g1"><i><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></i>Random gaps between groups</span>
+      <span class="guard g2"><i><svg viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></svg></i>Never sends twice</span>
+      <span class="guard g3"><i><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 7.8 8 9 4.6-1.2 8-4.5 8-9V6z"/></svg></i>Daily limits &amp; instant alerts</span>
+    </div>
+    <div class="plan c-plan">
+      <h4>Send plan <small>15 groups</small></h4>
+      <div id="prows"></div>
+    </div>
+    <div class="gap gp1" style="top: 730px;">⏳ Waiting 1 min 12 s before the next group</div>
+    <div class="gap gp2" style="top: 730px;">⏳ Waiting 48 s before the next group</div>
+    <div class="phone c-phone" style="left: 1400px;">
+      <div class="screen">
+        <div class="bar"></div>
+        <div id="grps"></div>
+        <div class="chat" id="chat"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= D. End card ================= -->
+  <section id="D" class="clip end" data-start="11.4" data-duration="2.6" data-track-index="0">
+    <img class="d-mark" src="assets/mark.svg" alt="">
+    <div class="name d-name">WA Box</div>
+    <div class="tag d-tag">Every group. <b>On time.</b> Safely.</div>
+    <div class="meta2 d-meta">Open source · Runs on your own server</div>
+  </section>
+
+  <div class="fade" id="fade"></div>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const MSG = 'Saturday class at 11 AM 👋 See you there!';
+  const TICK1 = '<svg viewBox="0 0 30 18"><path d="M9 9.5l3.5 3.5L20 5" fill="none" stroke="#8696a0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const TICK2 = c => `<svg viewBox="0 0 30 18"><path d="M3 9.5l3.5 3.5L14 5M12 12.5l.5.5L20 5" fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+  // ---------- A: chat list ----------
+  const rowsA = $('#arows');
+  for (let i = 1; i <= 8; i++) {
+    const r = el('div', 'row');
+    r.innerHTML = `<span class="flash"></span><span class="av">${i}</span><span class="t"><b>Weekend Cohort ${i}</b><span class="pv"><span class="old">Priya: thanks for the notes!</span><i class="new" style="opacity:0">You: ${MSG}</i></span></span><span class="tm">8:5${Math.min(9, 4 + i % 6)}</span><span class="paste">Paste · Send</span>`;
+    rowsA.appendChild(r);
+  }
+  const cnt = $('#cnt'), clk = $('#clk');
+  const counts = [1, 2, 3, 4, 5, 6, 7];
+  counts.forEach(n => cnt.appendChild(el('span', '', `${n}/15`)));
+  ['8:58', '8:59', '9:01', '9:03', '9:05', '9:06', '9:08'].forEach(t => clk.appendChild(el('span', '', t)));
+
+  // ---------- B: typed text ----------
+  const typed = $('#typed');
+  const chars = [];
+  const bold = 'Saturday class at 11 AM';
+  const wrapB = el('b'); typed.appendChild(wrapB);
+  [...MSG].forEach((ch, i) => {
+    const s = el('span', '', ch === ' ' ? '&nbsp;' : ch);
+    s.style.opacity = 0;
+    (i < bold.length ? wrapB : typed).appendChild(s);
+    chars.push(s);
+  });
+
+  // ---------- C: plan + chats ----------
+  const prows = $('#prows');
+  const plan = [['9:00', 'Weekend Cohort 1'], ['~9:01', 'Weekend Cohort 2'], ['~9:02', 'Weekend Cohort 3'], ['~9:04', 'Weekend Cohort 4'], ['~9:05', 'Weekend Cohort 5'], ['…', '10 more groups']];
+  plan.forEach(([t, n], i) => {
+    const r = el('div', 'prow');
+    r.innerHTML = `<span class="tm">${t}</span><span class="node" id="n${i}"></span><span class="nm">${n}</span><span class="st" id="s${i}">Sent</span>`;
+    if (i === 5) r.style.color = 'var(--ink-3)';
+    prows.appendChild(r);
+  });
+  const grps = $('#grps'), chat = $('#chat');
+  for (let i = 1; i <= 3; i++) {
+    const g = el('div', 'grp');
+    g.id = 'g' + i; g.style.opacity = i === 1 ? 1 : 0;
+    g.innerHTML = `<span class="av">${i}</span><span><b>Weekend Cohort ${i}</b><small>32 members</small></span>`;
+    grps.appendChild(g);
+    const b = el('div', 'bubble');
+    b.id = 'b' + i; b.style.top = '40px';
+    b.innerHTML = `<b>Saturday class at 11 AM</b> 👋<br>See you there!<div class="meta">9:0${i === 1 ? 0 : i === 2 ? 1 : 2}<span class="tick"><span class="k1">${TICK1}</span><span class="k2" style="opacity:0">${TICK2('#8696a0')}</span><span class="k3" style="opacity:0">${TICK2('#34b7f1')}</span></span></div>`;
+    chat.appendChild(b);
+  }
+
+  // ================= timeline =================
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+
+  // A (0 - 2.75)
+  tl.fromTo('#fade', { opacity: 1 }, { opacity: 0, duration: 0.35, ease: 'none' }, 0);
+  tl.from('.a-k', { y: 20, opacity: 0, duration: 0.4 }, 0.05);
+  ['.a-l1', '.a-l2', '.a-l3'].forEach((s, i) => tl.from(s, { y: 40, opacity: 0, duration: 0.45 }, 0.12 + i * 0.16));
+  tl.from('.a-phone', { x: 120, opacity: 0, duration: 0.6 }, 0.05);
+  tl.from('.meter .pill', { y: 24, opacity: 0, duration: 0.4, stagger: 0.1 }, 0.55);
+  const rows = [...document.querySelectorAll('#arows .row')];
+  const cntS = [...cnt.children], clkS = [...clk.children];
+  const step = 0.3;
+  rows.slice(0, 7).forEach((r, i) => {
+    const t = 0.55 + i * step;
+    tl.fromTo(r.querySelector('.flash'), { opacity: 0 }, { opacity: 1, duration: 0.06, ease: 'none' }, t);
+    tl.fromTo(r.querySelector('.paste'), { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.1 }, t);
+    tl.to(r.querySelector('.paste'), { opacity: 0, duration: 0.08 }, t + 0.2);
+    tl.set(r.querySelector('.old'), { opacity: 0 }, t + 0.12);
+    tl.set(r.querySelector('.new'), { opacity: 1 }, t + 0.12);
+    tl.to(r.querySelector('.flash'), { opacity: 0, duration: 0.15, ease: 'none' }, t + 0.18);
+    tl.set(cntS[i], { opacity: 1 }, t + 0.12);
+    if (i) tl.set(cntS[i - 1], { opacity: 0 }, t + 0.12);
+    tl.set(clkS[i], { opacity: 1 }, t + 0.12);
+    if (i) tl.set(clkS[i - 1], { opacity: 0 }, t + 0.12);
+  });
+  tl.to('.a-clock', { x: -6, duration: 0.05, repeat: 7, yoyo: true, ease: 'none' }, 2.6);
+  tl.to('#A', { opacity: 0, x: -60, duration: 0.3, ease: 'power2.in' }, 3.1);
+
+  // B (3.4 - 6.6)
+  const B0 = 3.4;
+  tl.from('.b-brand', { opacity: 0, duration: 0.3 }, B0);
+  tl.from('.b-k', { y: 20, opacity: 0, duration: 0.35 }, B0 + 0.02);
+  tl.from('.b-h', { y: 40, opacity: 0, duration: 0.45 }, B0 + 0.08);
+  tl.from('.b-s', { y: 24, opacity: 0, duration: 0.4 }, B0 + 0.22);
+  tl.from('.b-win', { y: 60, opacity: 0, scale: 0.97, duration: 0.55 }, B0);
+  // cursor: to "Weekend cohorts" chip, click
+  tl.fromTo('.b-cur', { x: 1500, y: 900, opacity: 0 }, { x: 1235, y: 300, opacity: 1, duration: 0.45, ease: 'power2.inOut' }, B0 + 0.2);
+  tl.to('.b-cur', { scale: 0.85, duration: 0.06, yoyo: true, repeat: 1 }, B0 + 0.66);
+  tl.to('.b-on', { opacity: 1, duration: 0.12 }, B0 + 0.68);
+  // typing
+  tl.set('.b-ph', { opacity: 0 }, B0 + 0.78);
+  chars.forEach((c, i) => tl.set(c, { opacity: 1 }, B0 + 0.8 + i * 0.03));
+  const typedEnd = B0 + 0.8 + chars.length * 0.03;
+  // cursor to Schedule button, click
+  tl.to('.b-cur', { x: 1655, y: 868, duration: 0.4, ease: 'power2.inOut' }, typedEnd - 0.2);
+  tl.to('.b-cur', { scale: 0.85, duration: 0.06, yoyo: true, repeat: 1 }, typedEnd + 0.22);
+  tl.to('#go', { scale: 0.96, duration: 0.06, yoyo: true, repeat: 1 }, typedEnd + 0.22);
+  tl.to('.b-ok', { opacity: 1, duration: 0.15 }, typedEnd + 0.28);
+  tl.to('.b-caret', { opacity: 0, duration: 0.1 }, typedEnd + 0.28);
+  tl.fromTo('.b-toast', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.3 }, typedEnd + 0.36);
+  tl.to('#B', { opacity: 0, duration: 0.25, ease: 'power2.in' }, 6.35);
+
+  // C (6.6 - 11.4)
+  const C0 = 6.6;
+  tl.from('#C .copy', { y: 30, opacity: 0, duration: 0.45 }, C0);
+  tl.from('.c-plan', { y: 40, opacity: 0, duration: 0.5 }, C0);
+  tl.from('.c-phone', { x: 100, opacity: 0, duration: 0.55 }, C0 + 0.05);
+  const sendAt = [C0 + 0.5, C0 + 1.9, C0 + 3.2];
+  sendAt.forEach((t, i) => {
+    const n = i + 1;
+    if (i) {
+      tl.to('#g' + i, { opacity: 0, duration: 0.12 }, t - 0.12);
+      tl.to('#b' + i, { opacity: 0, duration: 0.12 }, t - 0.12);
+      tl.fromTo('#g' + n, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.2 }, t - 0.02);
+    }
+    tl.fromTo('#n' + i, { '--f': 0 }, { '--f': 1, duration: 0.2 }, t);
+    tl.fromTo('#b' + n, { opacity: 0, y: 30, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'back.out(1.6)' }, t + 0.05);
+    tl.set(`#b${n} .k2`, { opacity: 1 }, t + 0.42); tl.set(`#b${n} .k1`, { opacity: 0 }, t + 0.42);
+    tl.set(`#b${n} .k3`, { opacity: 1 }, t + 0.7); tl.set(`#b${n} .k2`, { opacity: 0 }, t + 0.7);
+    tl.fromTo('#s' + i, { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.2 }, t + 0.15);
+  });
+  tl.fromTo('.gp1', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.25 }, sendAt[0] + 0.45);
+  tl.to('.gp1', { opacity: 0, duration: 0.15 }, sendAt[1] - 0.05);
+  tl.fromTo('.gp2', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.25 }, sendAt[1] + 0.4);
+  tl.to('.gp2', { opacity: 0, duration: 0.15 }, sendAt[2] - 0.05);
+  tl.fromTo('.g1', { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.35 }, C0 + 0.9);
+  tl.fromTo('.g2', { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.35 }, C0 + 1.7);
+  tl.fromTo('.g3', { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.35 }, C0 + 2.5);
+  tl.to('#C', { opacity: 0, duration: 0.3, ease: 'power2.in' }, 11.1);
+
+  // D (11.4 - 14)
+  const D0 = 11.4;
+  tl.from('.d-mark', { scale: 0.6, opacity: 0, duration: 0.5, ease: 'back.out(1.8)' }, D0);
+  tl.from('.d-name', { y: 30, opacity: 0, duration: 0.45 }, D0 + 0.12);
+  tl.from('.d-tag', { y: 24, opacity: 0, duration: 0.45 }, D0 + 0.24);
+  tl.from('.d-meta', { opacity: 0, duration: 0.4 }, D0 + 0.4);
+  tl.to('#fade', { opacity: 1, duration: 0.3, ease: 'none' }, 13.7);
+
+  window.__timelines = window.__timelines || {};
+  window.__timelines['main'] = tl;
+  tl.seek(0);
+})();
+</script>
+</body>
+</html>

@@ -34,7 +34,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/today.png" alt="WA Box: the Today page, with messages sending and coming up" width="900">
+  <img src="docs/media/hero.gif" alt="Before: pasting the same message into 15 WhatsApp groups. After: write it once in WA Box, and it goes to each group with natural gaps." width="900"><br>
+  <sub><a href="docs/media/hero.mp4">Watch in HD</a></sub>
 </p>
 
 ---
@@ -68,6 +69,9 @@ WA Box is a small web app your whole team can use:
 ## Features
 
 **Writing**
+
+<img src="docs/media/date-check.gif" alt="The date check notices the message says today and Saturday but is scheduled for Friday, and fixes it in one click" width="640">
+
 - WhatsApp formatting (`*bold*`, `_italic_`, `~strike~`, ```` ```mono``` ````, lists, quotes) with toolbar and shortcuts (Ctrl/⌘ + B, I, Enter).
 - Live phone preview that steps through each group, showing exactly what that group gets.
 - Placeholders filled in per group: `{group}`, `{day}`, `{date}`.
@@ -84,6 +88,9 @@ WA Box is a small web app your whole team can use:
 - "Send these again?": last week's messages offered back to you on Today.
 
 **Sending safely**
+
+<img src="docs/media/never-twice.gif" alt="WhatsApp's reply is lost; WA Box checks the group chat, finds the message and marks it sent instead of sending it again" width="640">
+
 - One message at a time, one group at a time, random gaps (never under 30 s), "typing…" first.
 - Daily and hourly limits. Over the limit, the rest go out the next morning, not at midnight.
 - Duplicate guard: the same text can't go to the same group twice within 20 hours, even from two different messages.
@@ -104,6 +111,9 @@ WA Box is a small web app your whole team can use:
 - Everyone signs in with their own account. Every action is in the activity log.
 
 **API and webhooks**
+
+<img src="docs/media/api.gif" alt="A new Google Sheet row becomes a scheduled message in WA Box through the API" width="640">
+
 - `POST /api/v1/messages` from a Google Sheet, Zapier, n8n, a CRM or a script. Same rules as the app.
 - Keys with `read` / `schedule` / `full` scope, optionally limited to some group lists. Stored hashed, shown once.
 - `Idempotency-Key`, so a retried request never schedules twice.
