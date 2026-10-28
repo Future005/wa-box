@@ -47,12 +47,12 @@ app.use((req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next()
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-// Redirect /wabox to /wabox/ so relative asset paths resolve.
-app.get('/', (req, res, next) => {
-  if (BASE_PATH && req.originalUrl === BASE_PATH) return res.redirect(302, BASE_PATH + '/');
-  next();
-});
-app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: 0 }));
+// Serve index.html with a <base href> so assets and API calls resolve under /wabox/
+// whether the visitor opened /wabox or /wabox/, and whether or not the proxy strips the prefix.
+const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
+  .replace('<head>', `<head>\n  <base href="${BASE_PATH}/">`);
+app.get(['/', '/index.html'], (_req, res) => res.type('html').send(INDEX_HTML));
+app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, maxAge: 0 }));
 
 const api = express.Router();
 api.use(express.json({ limit: '100kb' }));
