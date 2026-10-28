@@ -11,6 +11,8 @@ const path = require('node:path');
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wabox-test-'));
 const KEY = 'k'.repeat(64);
 const PORT = 27850 + Math.floor(Math.random() * 100);
+// Tests must not depend on the host's settings (Coolify passes them in at build time).
+for (const k of ['GROUP_KEYWORDS', 'ORG_NAME', 'ADMIN_USER', 'ADMIN_PASSWORD', 'PUBLIC_URL', 'WABOX_LOCAL', 'DAILY_CAP', 'MAX_LATE_MINUTES', 'BASE_PATH']) delete process.env[k];
 Object.assign(process.env, {
   DATA_DIR: DATA, WABOX_TEST_FAST: '1', WA_ENGINE_URL: `http://127.0.0.1:${PORT}`, WA_ENGINE_KEY: KEY,
   WABOX_SEND_TIMEOUT_MS: '300', DRY_RUN: 'false', WABOX_ALLOW_HTTP_HOOKS: '1',

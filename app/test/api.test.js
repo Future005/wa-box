@@ -8,6 +8,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wabox-api-'));
+// Tests must not depend on the host's settings (Coolify passes them in at build time).
+for (const k of ['GROUP_KEYWORDS', 'ORG_NAME', 'ADMIN_USER', 'ADMIN_PASSWORD', 'PUBLIC_URL', 'WABOX_LOCAL', 'DAILY_CAP', 'MAX_LATE_MINUTES', 'BASE_PATH']) delete process.env[k];
 Object.assign(process.env, { DATA_DIR: DATA, WABOX_TEST_FAST: '1', WA_ENGINE_URL: 'http://127.0.0.1:9', WA_ENGINE_KEY: 'x',
   WABOX_SKIP_URL_CHECK: '1', WABOX_ALLOW_HTTP_HOOKS: '1', WABOX_API_RATE: '40', WABOX_HOOK_TIMEOUT_MS: '500' });
 
