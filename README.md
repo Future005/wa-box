@@ -1,22 +1,37 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo.svg" alt="WA Box" width="260">
-  </picture>
+  <img src="docs/assets/mark.svg" alt="WA Box logo" width="120">
 </p>
+
+<h1 align="center">WA Box</h1>
 
 <p align="center">
   <b>Schedule messages to your WhatsApp groups, safely, as a team.</b><br>
-  Write once, pick the groups, pick a time. WA Box sends to each group with natural, random gaps,<br>
+  Write once, pick the groups, pick a time. WA Box sends to each group with natural, random gaps,
   checks every send, never sends twice, and tells you the moment anything goes wrong.
 </p>
 
 <p align="center">
+  <a href="#features">Features</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="docs/USER-GUIDE.md">User guide</a> ·
   <a href="docs/API.md">API</a> ·
-  <a href="RUNBOOK.md">Runbook</a> ·
-  <a href="#install-with-your-ai-assistant">Install with your AI assistant</a>
+  <a href="#install-with-your-ai-assistant">Install with AI</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-0b6e6e" alt="version 1.0.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4fc2b8" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/tests-74%20passing-2ea44f" alt="74 tests passing">
+  <img src="https://img.shields.io/badge/node-22%20LTS-339933?logo=nodedotjs&logoColor=white" alt="Node 22 LTS">
+  <img src="https://img.shields.io/badge/Express-5-555555?logo=express&logoColor=white" alt="Express 5">
+  <img src="https://img.shields.io/badge/SQLite-WAL-003b57?logo=sqlite&logoColor=white" alt="SQLite">
+  <img src="https://img.shields.io/badge/whatsapp--web.js-1.34.7-25d366?logo=whatsapp&logoColor=white" alt="whatsapp-web.js 1.34.7">
+  <img src="https://img.shields.io/badge/docker-ready-2496ed?logo=docker&logoColor=white" alt="Docker ready">
+  <img src="https://img.shields.io/badge/Coolify-one%20click-6b16ed" alt="Coolify one click">
+  <br>
+  <a href="https://www.linkedin.com/in/bhavishyabharadwaj/"><img src="https://img.shields.io/badge/designed%20by-Bhavishya-0a66c2?logo=linkedin&logoColor=white" alt="Designed by Bhavishya"></a>
 </p>
 
 <p align="center">
@@ -309,5 +324,5 @@ code map and the rules any change must keep.
 <p align="center">
   <img src="docs/assets/mark.svg" alt="" width="36"><br>
   <b>WA Box</b> · Designed by <a href="https://www.linkedin.com/in/bhavishyabharadwaj/">Bhavishya</a><br>
-  <sub>See <a href="CHANGELOG.md">what's new</a>.</sub>
+  <sub><a href="LICENSE">MIT license</a> · <a href="CHANGELOG.md">What's new</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="SECURITY.md">Security</a></sub>
 </p>

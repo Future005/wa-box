@@ -1,0 +1,21 @@
+name: Feature idea
+description: Suggest something that would make scheduling easier or safer
+labels: [idea]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's hard today?
+      description: Describe the situation, e.g. "Every Friday I re-create the same 5 messages".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: This doesn't need WA Box to send faster, send more, or send to personal chats.

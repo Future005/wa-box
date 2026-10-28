@@ -1,0 +1,35 @@
+name: Bug report
+description: Something didn't work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks! Please leave out real phone numbers, group names and keys. **Security problems:** use Security → Report a vulnerability instead."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we make it happen again?
+      placeholder: "1. Schedule a weekly message to 3 groups\n2. ..."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Event log lines
+      description: From System & logs, or `docker compose logs wabox`. Remove anything private.
+      render: text
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it run?
+      options: [Coolify, Other Docker server, My own computer (local copy)]
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "1.0.0 or a commit id"

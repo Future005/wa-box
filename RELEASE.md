@@ -32,8 +32,9 @@ Tick every box, in order.
 
 ## 3. Add what a public project needs
 
-- [ ] A `LICENSE` file. Pick one (MIT is simplest; AGPL-3.0 if hosted copies must share changes). Add the name to the README footer.
-- [ ] `SECURITY.md`: how to report a vulnerability privately (an email address), and that only the latest version is supported.
+- [ ] `LICENSE` is MIT. Keep it, or swap for AGPL-3.0 if you want hosted copies to share their changes (update the README badge and footer).
+- [ ] In the new repo's settings, turn on **Private vulnerability reporting** (Security tab), which SECURITY.md points to.
+- [ ] Replace `Future005/wa-box` in the README badges, `.github/ISSUE_TEMPLATE/config.yml` and CONTRIBUTING.md with the public repo's path.
 - [ ] Replace `<your-repo-link>` in `README.md` (3 places in "Get started" and "Install with your AI assistant") with the public repo's URL.
 - [ ] README: keep the "Is this allowed by WhatsApp?" FAQ and the not-affiliated sentence.
 
