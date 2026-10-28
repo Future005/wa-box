@@ -11,6 +11,8 @@ permissions:
 jobs:
   test:
     name: Safety tests
+    # Free on public repositories. Skipped while the repo is private (its Actions minutes are billed).
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
