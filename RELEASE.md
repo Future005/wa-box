@@ -34,7 +34,9 @@ Tick every box, in order.
 
 - [ ] `LICENSE` is MIT. Keep it, or swap for AGPL-3.0 if you want hosted copies to share their changes (update the README badge and footer).
 - [ ] In the new repo's settings, turn on **Private vulnerability reporting** (Security tab), which SECURITY.md points to.
-- [ ] Replace `Future005/wa-box` in the README badges, `.github/ISSUE_TEMPLATE/config.yml` and CONTRIBUTING.md with the public repo's path.
+- [ ] Tests run on GitHub Actions for free once the repo is public. After the first green run, add the CI badge at the start of the README badge row:
+  `<a href="https://github.com/<owner>/<repo>/actions/workflows/ci.yml"><img src="https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg" alt="CI"></a>`
+- [ ] Replace `Future005/wa-box` in `.github/ISSUE_TEMPLATE/config.yml` and CONTRIBUTING.md with the public repo's path.
 - [ ] Replace `<your-repo-link>` in `README.md` (3 places in "Get started" and "Install with your AI assistant") with the public repo's URL.
 - [ ] README: keep the "Is this allowed by WhatsApp?" FAQ and the not-affiliated sentence.
 
