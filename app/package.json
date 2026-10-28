@@ -2,7 +2,7 @@
   "name": "wabox",
   "version": "1.0.0",
   "private": true,
-  "description": "Safe, simple WhatsApp group message scheduler (Gateway + whatsapp-web.js)",
+  "description": "Safe, simple WhatsApp group message scheduler (own whatsapp-web.js engine)",
   "main": "src/server.js",
   "type": "commonjs",
   "engines": { "node": ">=22" },

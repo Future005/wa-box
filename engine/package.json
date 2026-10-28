@@ -1,0 +1,17 @@
+{
+  "name": "wabox-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WA Box WhatsApp engine: one whatsapp-web.js session in headless Chrome, behind a tiny private API",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4",
+    "whatsapp-web.js": "1.34.7"
+  }
+}

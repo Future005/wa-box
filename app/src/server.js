@@ -8,7 +8,7 @@ const multer = require('multer');
 
 const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db');
 const auth = require('./auth');
-const wa = require('./gateway');
+const wa = require('./wa');
 const sched = require('./scheduler');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');

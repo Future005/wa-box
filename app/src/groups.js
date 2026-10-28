@@ -2,7 +2,7 @@
 // "Sync from WhatsApp" (or once, automatically, the first time WhatsApp connects).
 // Everything else (the picker, job validation, the scheduler) reads this table instantly.
 const { db, getSetting, setSetting, audit } = require('./db');
-const wa = require('./gateway');
+const wa = require('./wa');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS wa_groups (

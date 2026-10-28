@@ -18,7 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db');
-const wa = require('./gateway');
+const wa = require('./wa');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');
 const { istDayKey, nextIstMidnight, nextWeeklyOccurrence, formatIst: rawIst, prettyIst: formatIst, epochToIst } = require('./time');
@@ -81,7 +81,7 @@ async function refreshWa() {
   const prev = state.wa.status;
   try {
     const s = await wa.getStatus();
-    state.wa = { ...state.wa, ...s, error: null, checkedAt: Date.now() };
+    state.wa = { ...state.wa, ...s, error: s.engineError || null, checkedAt: Date.now() };
     if (['created', 'disconnected', 'failed', 'stopped'].includes(s.status) && Date.now() - state.lastReconnectTry > RECONNECT_EVERY_MS) {
       state.lastReconnectTry = Date.now();
       logEvent('warn', 'whatsapp', `Status is "${s.status}", trying to reconnect`);

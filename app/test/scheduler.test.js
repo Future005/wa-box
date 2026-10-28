@@ -12,11 +12,11 @@ const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wabox-test-'));
 const KEY = 'k'.repeat(64);
 const PORT = 27850 + Math.floor(Math.random() * 100);
 Object.assign(process.env, {
-  DATA_DIR: DATA, WABOX_TEST_FAST: '1', GATEWAY_URL: `http://127.0.0.1:${PORT}`, GATEWAY_API_KEY: KEY,
+  DATA_DIR: DATA, WABOX_TEST_FAST: '1', WA_ENGINE_URL: `http://127.0.0.1:${PORT}`, WA_ENGINE_KEY: KEY,
   WABOX_SEND_TIMEOUT_MS: '300', DRY_RUN: 'false',
 });
 
-// ---------- fake Gateway ----------
+// ---------- fake engine (same API as engine/src/server.js) ----------
 const gw = { delivered: [], behaviour: {}, calls: {}, status: 'ready' };
 // behaviour[chatId] = array of modes used in order; last one repeats:
 //   ok | timeout_delivered | timeout_lost | reject400 | reject409 | error500_delivered
@@ -26,29 +26,28 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     const j = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (req.headers['x-api-key'] !== KEY) return j(401, { message: 'bad key' });
-    const u = req.url;
-    if (u === '/api/sessions') return j(200, [{ id: 'sess-1', name: 'wabox', status: gw.status }]);
-    if (u === '/api/sessions/sess-1') return j(200, { id: 'sess-1', status: gw.status, phone: '919000000000', pushName: 'Test' });
-    if (u.endsWith('/chats/typing')) return j(200, { success: true });
-    const hist = u.match(/\/messages\/([^/]+)\/history/);
-    if (hist) {
-      const chat = decodeURIComponent(hist[1]);
-      return j(200, gw.delivered.filter(d => d.chatId === chat).map(d => ({ id: d.id, body: d.text, fromMe: true, timestamp: Math.floor(d.at / 1000), chatId: chat })));
+    const u = new URL(req.url, 'http://x');
+    if (u.pathname === '/status') return j(200, { status: gw.status, phone: '919000000000', pushName: 'Test' });
+    if (u.pathname === '/typing') return j(200, { ok: true });
+    if (u.pathname === '/groups') return j(200, []);
+    if (u.pathname === '/history') {
+      const chat = u.searchParams.get('chatId');
+      return j(200, gw.delivered.filter(d => d.chatId === chat).map(d => ({ id: d.id, body: d.text, fromMe: true, timestamp: Math.floor(d.at / 1000) })));
     }
-    if (u.endsWith('/send-text') || u.endsWith('/send-image')) {
+    if (u.pathname === '/send-text' || u.pathname === '/send-image') {
       const b = JSON.parse(body); const chat = b.chatId;
       const modes = gw.behaviour[chat] || ['ok'];
       const n = gw.calls[chat] = (gw.calls[chat] || 0) + 1;
       const mode = modes[Math.min(n - 1, modes.length - 1)];
       const deliver = () => gw.delivered.push({ chatId: chat, text: b.text ?? b.caption, url: b.url, base64: !!b.base64, linkPreview: b.linkPreview, at: Date.now(), id: 'm' + gw.delivered.length });
-      if (mode === 'ok') { deliver(); return j(201, { messageId: 'm' + (gw.delivered.length - 1) }); }
-      if (mode === 'timeout_delivered') { deliver(); return setTimeout(() => j(201, {}), 2000); }
-      if (mode === 'timeout_lost') return setTimeout(() => j(201, {}), 2000);
+      if (mode === 'ok') { deliver(); return j(200, { messageId: 'm' + (gw.delivered.length - 1) }); }
+      if (mode === 'timeout_delivered') { deliver(); return setTimeout(() => j(200, {}), 2000); }
+      if (mode === 'timeout_lost') return setTimeout(() => j(200, {}), 2000);
       if (mode === 'reject400') return j(400, { message: 'Not a participant' });
-      if (mode === 'reject409') return j(409, { message: 'Engine not ready' });
-      if (mode === 'error500_delivered') { deliver(); return j(500, { message: 'Internal error' }); }
+      if (mode === 'reject409') return j(409, { message: 'WhatsApp is not ready (initializing)' });
+      if (mode === 'error500_delivered') { deliver(); return j(500, { message: 'Evaluation failed' }); }
     }
-    j(404, { message: 'not found ' + u });
+    j(404, { message: 'not found ' + u.pathname });
   });
 });
 
@@ -329,7 +328,7 @@ test('link preview switched off is passed to WhatsApp; on by default', async () 
   addJob({ groups: [2], message: 'And this https://example.com/guide' });
   await runUntilIdle();
   assert.equal(gw.delivered.find(d => d.chatId === G(1).id).linkPreview, false);
-  assert.equal(gw.delivered.find(d => d.chatId === G(2).id).linkPreview, undefined);
+  assert.equal(gw.delivered.find(d => d.chatId === G(2).id).linkPreview, true);
 });
 
 test('uploaded image: sent, then deleted 3 days after the message is done; weekly messages keep theirs', async () => {

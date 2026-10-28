@@ -23,12 +23,15 @@ What to do when something goes wrong. Everything below is done at **wabox.exampl
 
 ## Site is down / nobody is around
 - An **outside uptime monitor** is the only thing that can warn you when the whole server is down. Point a free monitor (UptimeRobot, Better Stack) at `https://wabox.example.com/wabox/health/monitor`. It returns 200 when healthy and 503 when the scheduler stalled, sending is paused, or WhatsApp has been disconnected for 10+ minutes.
-- In Coolify: WA Box → wabox → Logs (`wabox` and `gateway` services). Both containers restart automatically if they crash.
+- In Coolify: WA Box → wabox → Logs (`wabox` and `engine` services). Both containers restart automatically if they crash.
 - After any restart, WA Box checks every send that was in flight against the group's chat before doing anything. It never resends blindly.
+
+## WhatsApp Web changed and nothing sends
+The engine automatically retries on the last WhatsApp Web version that worked. If sends still fail: in `engine/package.json` bump `whatsapp-web.js` to the latest release (`npm view whatsapp-web.js version`), push, and Coolify rebuilds. To force a specific WhatsApp Web build, set `WA_WEB_VERSION` in Coolify's environment variables and redeploy.
 
 ## Updates
 Push to `main` → Coolify builds. The build runs the safety tests; **if any test fails, the deploy stops and the current version keeps running.** During a redeploy the old copy finishes the message it is sending, then stops; only one copy can send at a time.
 
 ## Backups and archive
 - System & logs → Archive: download every send, every message, and the event log as CSV.
-- Coolify volumes `wabox-data` (jobs, users, logs) and `gateway-data` (WhatsApp login). Back them up with Coolify's volume backups.
+- Coolify volumes `wabox-data` (jobs, users, logs) and `engine-data` (WhatsApp login). Back them up with Coolify's volume backups.

@@ -5,7 +5,7 @@
 // Each alert key fires at most once per hour while the problem lasts, and is listed
 // as an open issue in the System page until it clears.
 const { db, getSetting, logEvent } = require('./db');
-const wa = require('./gateway');
+const wa = require('./wa');
 const { epochToIst } = require('./time');
 
 const REPEAT_MS = 60 * 60 * 1000;
