@@ -48,7 +48,7 @@ a { color: var(--teal); }
 /* ---------- brand ---------- */
 .mark-row { display: flex; align-items: center; gap: 9px; }
 .mark {
-  width: 26px; height: 26px; border-radius: 8px; background: var(--teal) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='6.5'/%3E%3Cpath d='M12 8.6V12l2.4 1.6'/%3E%3C/svg%3E") center/18px no-repeat;
+  width: 26px; height: 26px; border-radius: 8px; background: var(--teal) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='12 12 40 40' fill='none' stroke-width='4.4' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M19.6 45.6 21.4 38.4A15.5 15.5 0 1 1 27 43.6Z' stroke='%23fff'/%3E%3Cpath d='M33.5 22.5V31l5.6 3.6' stroke='%237fe0d3'/%3E%3C/svg%3E") center/19px no-repeat;
 }
 .wordmark { font-weight: 780; letter-spacing: -.035em; font-size: 17px; }
 .org { margin-left: auto; font-size: 12px; color: var(--ink-3); font-weight: 600; }
@@ -561,3 +561,7 @@ code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; ba
 fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .bubble-text code { background: none; padding: 0; }
 #hooks-table, #deliveries-table, #keys-table { min-width: 680px; }
+.credit { margin: 0; font-size: 12px; color: var(--ink-3); text-align: center; }
+.credit a { color: var(--ink-2); font-weight: 650; text-decoration: none; }
+.credit a:hover { color: var(--teal); text-decoration: underline; }
+.rail-credit { text-align: left; padding: 0 10px; }

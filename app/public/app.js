@@ -23,7 +23,8 @@
   const firstLine = t => (String(t || '').split('\n').find(l => l.trim()) || '').replace(/[*_~`]/g, '').trim();
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   const who = u => String(u || '').startsWith('api:') ? `${u.slice(4)} (API)` : u;
-  const jobName = j => j.title || firstLine(j.message) || `Message #${j.id}`;
+  // Placeholders shown filled in for the first group, so lists don't read "{day} Live Class".
+  const jobName = j => j.title || firstLine(renderMessage(j.message, j.groups?.[0]?.name || '', j.runAt || Date.now())) || `Message #${j.id}`;
   const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
     del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } } };

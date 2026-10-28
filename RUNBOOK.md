@@ -19,6 +19,7 @@ What to do when something goes wrong. Everything below is done at **wabox.exampl
 | Blocked a duplicate | The same text was about to go to the same group within the duplicate window. | Usually correct. If it really should go again, open the message → **Send again** for that group. |
 | Message was not sent: more than N min late | The server or WhatsApp was down at send time. | Re-schedule it if it still matters (open it → Duplicate). |
 | A weekly message was stopped | Its next date looked wrong, so it was stopped instead of risking repeats. | Re-create it. |
+| A webhook stopped answering | Another system didn't accept WA Box's events for ~9 hours. Sending is not affected. | API & webhooks → Recent deliveries shows the error. Fix the receiver, press **Send a test**. |
 | No morning check-in arrived | The app or server may be down. | Open the site. If it doesn't load, see "Site is down". |
 
 ## Site is down / nobody is around
@@ -35,3 +36,11 @@ Push to `main` → Coolify builds. The build runs the safety tests; **if any tes
 ## Backups and archive
 - System & logs → Archive: download every send, every message, and the event log as CSV.
 - Coolify volumes `wabox-data` (jobs, users, logs) and `engine-data` (WhatsApp login). Back them up with Coolify's volume backups.
+
+## API problems
+- **401 unauthorized**: the key is wrong or was revoked. API & webhooks → Keys shows when each key was last used. Make a new key if needed.
+- **A script scheduled the same message twice**: it didn't send an `Idempotency-Key`. Cancel the extra in Scheduled (or let the duplicate guard block it), and add the header (see docs/API.md).
+- **Someone shouldn't have API access any more**: revoke their key. Messages it already scheduled stay in Scheduled; cancel them there if needed.
+
+## Running a copy on your own computer
+See the README's "Get started". `make status` and `make logs` show what's happening. A local copy always starts in practice mode and only runs while the computer is awake.
