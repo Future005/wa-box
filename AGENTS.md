@@ -67,7 +67,7 @@ The production file is `docker-compose.yml`: two services.
 
 1. New resource → Git repository → build pack **Docker Compose** → `/docker-compose.yml`.
 2. Domain on `wabox` only, e.g. `https://example.com/wabox` (`BASE_PATH=/wabox`) or `https://wabox.example.com` (set `BASE_PATH=/`).
-3. Set `ADMIN_USER`, `ORG_NAME`, `GROUP_KEYWORDS` in `docker-compose.yml`. Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` itself.
+3. Set `ADMIN_USER`, and optionally `ORG_NAME`, `GROUP_KEYWORDS`, `PUBLIC_URL`, in Coolify's Environment Variables (never in the repo). Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` itself.
 4. Deploy. The user finds the first admin password in Coolify (Environment Variables → `SERVICE_PASSWORD_ADMIN`) and changes it on first sign-in.
 5. Check `https://<domain>/<base>/healthz` returns `{"ok":true}`.
 6. Recommend an uptime monitor on `/health/monitor` (503 means someone should look).

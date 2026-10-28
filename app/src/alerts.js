@@ -15,7 +15,7 @@ function config() {
     webhookUrl: getSetting('alert_webhook', ''),
     waNumbers: getSetting('alert_wa_numbers', []),
     digest: getSetting('alert_digest', true),
-    appUrl: process.env.PUBLIC_URL || 'https://wabox.example.com/wabox/',
+    appUrl: process.env.PUBLIC_URL || '',
   };
 }
 
@@ -50,7 +50,7 @@ async function raise(key, level, message, { waReady = false } = {}) {
   if (row?.open && now - row.last_at < REPEAT_MS) return;
   db.prepare('UPDATE alert_log SET last_at=? WHERE key=?').run(now, key);
   const icon = level === 'error' ? '🔴' : '🟠';
-  const text = `${icon} WA Box: ${message}\n${config().appUrl}`;
+  const text = `${icon} WA Box: ${message}${config().appUrl ? '\n' + config().appUrl : ''}`;
   const res = await deliver(text, { waReady });
   logEvent(level, 'alert', `${message}${res.length ? ` [sent via ${res.join(', ')}]` : ' [no alert channel set up]'}`);
 }

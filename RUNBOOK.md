@@ -1,6 +1,6 @@
 # WA Box runbook
 
-What to do when something goes wrong. Everything below is done at **wabox.example.com/wabox** unless it says Coolify.
+What to do when something goes wrong. Everything below is done in WA Box itself unless it says Coolify.
 
 ## Where to look first
 
@@ -26,7 +26,7 @@ What to do when something goes wrong. Everything below is done at **wabox.exampl
 | No morning check-in arrived | The app or server may be down. | Open the site. If it doesn't load, see "Site is down". |
 
 ## Site is down / nobody is around
-- An **outside uptime monitor** is the only thing that can warn you when the whole server is down. Point a free monitor (UptimeRobot, Better Stack) at `https://wabox.example.com/wabox/health/monitor`. It returns 200 when healthy and 503 when the scheduler stalled, sending is paused, or WhatsApp has been disconnected for 10+ minutes.
+- An **outside uptime monitor** is the only thing that can warn you when the whole server is down. Point a free monitor (UptimeRobot, Better Stack) at `https://<your-wa-box>/health/monitor`. It returns 200 when healthy and 503 when the scheduler stalled, sending is paused, or WhatsApp has been disconnected for 10+ minutes.
 - In Coolify: WA Box → wabox → Logs (`wabox` and `engine` services). Both containers restart automatically if they crash.
 - After any restart, WA Box checks every send that was in flight against the group's chat before doing anything. It never resends blindly.
 

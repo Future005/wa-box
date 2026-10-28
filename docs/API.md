@@ -10,7 +10,7 @@ always sees what is about to go out.
 
 <img src="media/api.gif" alt="A new Google Sheet row becomes a scheduled message in WA Box through the API" width="720">
 
-- Base address: `https://<your-wa-box>/api/v1` (for example `https://wabox.example.com/wabox/api/v1`)
+- Base address: `https://<your-wa-box>/api/v1` (for example `https://wabox.example.com/api/v1`)
 - Machine-readable spec: `https://<your-wa-box>/openapi.yaml` (OpenAPI 3.1, imports into Postman, Insomnia, Bruno)
 - Times: India time (Asia/Kolkata) unless you give a timezone
 

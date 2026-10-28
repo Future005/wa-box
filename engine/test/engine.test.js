@@ -15,12 +15,12 @@ const KEY = 'e'.repeat(64);
 let made = [];
 class FakeClient extends EventEmitter {
   constructor(opts) { super(); this.opts = opts; this.sent = []; this.state = 'CONNECTED'; this.destroyed = false; made.push(this); }
-  async initialize() { setImmediate(() => { this.emit('qr', 'qr-data'); if (FakeClient.autoReady) { this.emit('authenticated'); this.info = { wid: { user: '919000000000' }, pushname: 'Acme Academy' }; this.emit('ready'); } }); }
+  async initialize() { setImmediate(() => { this.emit('qr', 'qr-data'); if (FakeClient.autoReady) { this.emit('authenticated'); this.info = { wid: { user: '919000000000' }, pushname: 'Acme' }; this.emit('ready'); } }); }
   async getWWebVersion() { return '2.3000.1012345678'; }
   async getState() { if (this.hang) return new Promise(() => {}); return this.state; }
   async destroy() { this.destroyed = true; }
   async logout() {}
-  async getChats() { return [{ isGroup: true, id: { _serialized: '1@g.us' }, name: 'A' }, { isGroup: false, id: { _serialized: '9@c.us' }, name: 'Someone' }]; }
+  async getChats() { return [{ isGroup: true, id: { _serialized: '1@g.us' }, name: 'Cohort A' }, { isGroup: false, id: { _serialized: '9@c.us' }, name: 'Someone' }]; }
   async getChatById(id) { return { fetchMessages: async () => this.sent.filter(s => s.chatId === id).map((s, i) => ({ id: { _serialized: 'm' + i }, body: typeof s.content === 'string' ? s.content : s.opts.caption, fromMe: true, timestamp: 1 })), sendStateTyping: async () => {}, clearState: async () => {} }; }
   async getMessageById(id) { return this.sent.find(s => s.id === id) ? { ack: 1 } : null; }
   async sendMessage(chatId, content, opts) { if (this.failSend) throw new Error('Evaluation failed'); const id = 'true_' + chatId + '_' + this.sent.length; this.sent.push({ chatId, content, opts, id }); return { id: { _serialized: id } }; }
@@ -57,7 +57,7 @@ test('start -> QR -> ready; records the WhatsApp Web version that worked', async
   await engine.start(); await tick();
   assert.equal(engine.status, 'qr_ready');
   assert.match((await call('GET', '/qr')).body.qrCode, /^data:image\/png;base64,/);
-  made[0].info = { wid: { user: '919000000000' }, pushname: 'Acme Academy' }; made[0].emit('ready'); await tick();
+  made[0].info = { wid: { user: '919000000000' }, pushname: 'Acme' }; made[0].emit('ready'); await tick();
   const s = (await call('GET', '/status')).body;
   assert.equal(s.status, 'ready'); assert.equal(s.phone, '919000000000');
   assert.equal(fs.readFileSync(path.join(process.env.DATA_DIR, 'last-good-wa-version.txt'), 'utf8'), '2.3000.1012345678');
@@ -91,7 +91,7 @@ test('a failure inside WhatsApp Web is a 5xx (= maybe sent, WA Box checks the ch
 
 test('groups lists only groups; history returns our sent messages', async () => {
   await engine.start(); await tick();
-  assert.deepEqual((await call('GET', '/groups')).body, [{ id: '1@g.us', name: 'A' }]);
+  assert.deepEqual((await call('GET', '/groups')).body, [{ id: '1@g.us', name: 'Cohort A' }]);
   await call('POST', '/send-text', { chatId: '1@g.us', text: 'hello' });
   const h = (await call('GET', '/history?chatId=1@g.us&limit=10')).body;
   assert.equal(h[0].body, 'hello'); assert.equal(h[0].fromMe, true);

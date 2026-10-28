@@ -37,7 +37,7 @@ after(() => { srv.close(); receiver.close(); fs.rmSync(DATA, { recursive: true, 
 beforeEach(() => {
   for (const t of ['jobs', 'sends', 'wa_groups', 'group_lists', 'api_keys', 'idempotency', 'webhooks', 'hook_deliveries', 'alert_log']) db.exec(`DELETE FROM ${t}`);
   const now = Date.now();
-  for (const [id, name] of [['1@g.us', 'Weekend Cohort 1'], ['2@g.us', 'Weekend Cohort 2'], ['3@g.us', 'Masterclass']]) {
+  for (const [id, name] of [['1@g.us', 'Weekend Cohort 1'], ['2@g.us', 'Weekend Cohort 2'], ['3@g.us', 'Masterclass Nov']]) {
     db.prepare('INSERT INTO wa_groups(id,name,active,updated_at) VALUES(?,?,1,?)').run(id, name, now);
   }
   db.prepare("INSERT INTO group_lists(id,name,group_ids,created_by,updated_at) VALUES(1,'Weekend','[\"1@g.us\",\"2@g.us\"]','t',?)").run(now);
@@ -86,7 +86,7 @@ test('a read key can look but not schedule', async () => {
 
 test('schedule by list name and group name; recorded as made by the key; never starts inside the undo window', async () => {
   const k = keys.create({ name: 'Google Sheet', scope: 'schedule' }, ADMIN);
-  const r = await call('POST', '/messages', { key: k.key, body: { text: 'Class at 11 *today*', list: 'weekend', groups: ['Masterclass'], sendAt: 'now', pacing: 'gentle' } });
+  const r = await call('POST', '/messages', { key: k.key, body: { text: 'Class at 11 *today*', list: 'weekend', groups: ['Masterclass Nov'], sendAt: 'now', pacing: 'gentle' } });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const m = r.body.message;
   assert.deepEqual(m.groups.map(g => g.id).sort(), ['1@g.us', '2@g.us', '3@g.us']);

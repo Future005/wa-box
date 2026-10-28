@@ -86,7 +86,7 @@ async function validateJobInput(body, { requireFuture = true } = {}) {
 }
 
 
-/** Insert a validated message. `createdBy` is a person ("admin@example.com") or an API key ("api:Sheets sync"). */
+/** Insert a validated message. `createdBy` is a person ("asha@example.com") or an API key ("api:Sheets sync"). */
 function createJob(v, { createdBy, media = null }) {
   if (v.imageUrl && media) throw bad('Use either an uploaded image or an image link, not both');
   const now = Date.now();

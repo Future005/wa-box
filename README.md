@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.0.0"></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="MIT license"></a>
   <img src="docs/badges/tests.svg" alt="74 tests passing">
@@ -164,7 +165,7 @@ Good for trying it out. Runs at `http://localhost:3000`, only on your computer, 
 **Mac / Linux**
 
 ```bash
-git clone <your-repo-link> wabox
+git clone https://github.com/Future005/wa-box wabox
 cd wabox
 sh scripts/setup.sh
 ```
@@ -172,7 +173,7 @@ sh scripts/setup.sh
 **Windows** (PowerShell, with [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) running)
 
 ```powershell
-git clone <your-repo-link> wabox
+git clone https://github.com/Future005/wa-box wabox
 cd wabox
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
@@ -195,7 +196,7 @@ out at 7 AM on a Sunday, use a server.
 
 1. In Coolify: **New resource → Git repository** (your fork), build pack **Docker Compose**, file `/docker-compose.yml`.
 2. Domain for the `wabox` service, e.g. `https://example.com/wabox` (or a whole subdomain; set `BASE_PATH` to match). Give the `engine` service **no** domain.
-3. Edit `ADMIN_USER`, `ORG_NAME` and `GROUP_KEYWORDS` in `docker-compose.yml`.
+3. In Coolify's **Environment Variables**, set `ADMIN_USER` (your email), and optionally `ORG_NAME`, `GROUP_KEYWORDS` and `PUBLIC_URL`. Nothing personal goes in the repo.
 4. Deploy. Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` (the first admin's password; you change it on first sign-in).
 5. Point a free uptime monitor at `https://<your-domain>/wabox/health/monitor`.
 
@@ -215,7 +216,7 @@ you. The repo has an [`AGENTS.md`](AGENTS.md) that tells them how. Paste one of 
 **Run it on my computer**
 
 ```text
-Clone <your-repo-link> and set up WA Box on this computer by following its AGENTS.md.
+Clone https://github.com/Future005/wa-box and set up WA Box on this computer by following its AGENTS.md.
 Check Docker is installed and running first, and tell me how to install it if not.
 Use admin username: <your email>. Organisation name: <your org>. Group keywords: <e.g. Cohort, Batch>.
 When it's running, give me the address, my username and the one-time password, then walk me
@@ -225,7 +226,7 @@ through linking WhatsApp. Keep it in practice mode.
 **Put it on my server**
 
 ```text
-Clone <your-repo-link> and help me deploy WA Box to my server by following AGENTS.md (section "Deploy").
+Clone https://github.com/Future005/wa-box and help me deploy WA Box to my server by following AGENTS.md (section "Deploy").
 My server uses <Coolify / plain Docker / ...> and the address should be <https://...>.
 Don't put any secrets in git. Keep the engine service private. Tell me exactly what to click
 or run, and check the health endpoint at the end.
@@ -303,6 +304,7 @@ Set in `docker-compose.yml` (server) or `.env` (local copy).
 | `COOKIE_INSECURE` | `false` | `true` only for `http://localhost`. |
 | `WABOX_LOCAL` | `false` | Local copy: always starts in practice mode, labelled "Local copy". |
 | `WABOX_API_RATE` | `60` | Public API requests per minute per key. |
+| `PUBLIC_URL` | empty | The app's address, added to alert messages as a link. |
 
 | Engine (`engine`) | Default | |
 |---|---|---|
