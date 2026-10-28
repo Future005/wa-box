@@ -150,4 +150,4 @@ const setSetting = (key, value) =>
 const audit = (actor, action, detail = '') =>
   db.prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)').run(Date.now(), actor, action, String(detail).slice(0, 500));
 
-module.exports = { db, DATA_DIR, getSetting, setSetting, audit, logEvent };
+module.exports = { db, DATA_DIR, getSetting, setSetting, audit, logEvent, addColumn };

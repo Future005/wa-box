@@ -58,6 +58,9 @@
     }).join('\n')).join('');
   }
 
+  // Placeholders + date sense-check live in lib.js (shared with the test suite).
+  const { renderMessage, hasPlaceholders, unknownPlaceholders, dateSense, nextDateWithDow, DAYS_FULL } = window.WABoxLib;
+
   // ============ state + API ============
   const S = { me: null, status: null, groups: [], sync: null, lists: [], templates: [], upcoming: [], past: [], sends: [],
     view: null, params: {}, compose: null, schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
@@ -229,6 +232,7 @@
       <a class="stat" href="${isAdmin() ? '#settings' : '#today'}"><small>Sending</small><b><span class="dot ${live[0]}"></span>${live[1]}</b></a>
       <a class="stat" href="#sent"><small>Sent today</small><b class="num">${s.sentToday} <span class="hint">of ${s.dailyCap}</span></b><span class="meter"><i data-w="${Math.min(100, Math.round(s.sentToday / s.dailyCap * 100))}"></i></span></a>`;
 
+    renderAgainStrip();
     const week = S.upcoming.filter(j => j.startAt < now + 7 * DAY);
     $('#today-agenda').innerHTML = week.length ? agendaHtml(week) : `<div class="empty"><b>Nothing scheduled this week</b><p>Write a message once, pick your groups, and WA Box sends it at the right time with safe gaps.</p><a class="btn btn-primary" href="#compose">New message</a></div>`;
 
@@ -241,6 +245,17 @@
       $('#today-recent').innerHTML = S.sends.filter(x => ['sent', 'dry_run'].includes(x.status)).slice(0, 6)
         .map(x => `<div class="pl-row clickable" data-job="${x.jobId}"><span><b>${esc(x.group)}</b><small>${esc(firstLine(x.preview))} · ${esc(ago(x.at))}</small></span>${pill(x.status)}</div>`).join('');
     });
+  }
+  function againCandidates() {
+    const now = Date.now();
+    return S.past.filter(j => ['done', 'done_with_errors'].includes(j.status) && !j.repeatDays.length && now - j.runAt < 8 * DAY)
+      .filter(j => !S.upcoming.some(u => u.message.trim() === j.message.trim() && u.groups.some(g => j.groups.some(h => h.id === g.id))))
+      .sort((a, b) => b.runAt - a.runAt).slice(0, 3);
+  }
+  function nextWeekOf(j) { let n = j.runAt + 7 * DAY; while (n < Date.now() + 5 * 60000) n += 7 * DAY; return n; }
+  function renderAgainStrip() {
+    const list = againCandidates();
+    $('#again-strip').innerHTML = list.length ? `<section class="again"><h2>Send these again?</h2>${list.map(j => `<div class="again-row"><span><b>${esc(jobName(j))}</b><small>${plural(j.groups.length, 'group')} · last sent ${esc(shortDate(j.runAt))}, ${ist(j.runAt).time}</small></span><a class="btn btn-ghost btn-sm" href="#compose?again=${j.id}">Repeat ${esc(shortDate(nextWeekOf(j)))}</a></div>`).join('')}</section>` : '';
   }
   async function loadSendsQuiet() { try { S.sends = (await api('sends')).sends; } catch { /* keep */ } }
   ['#today-attention', '#today-recent', '#today-agenda', '#sched-list'].forEach(sel => $(sel).addEventListener('click', e => {
@@ -302,7 +317,7 @@
     const acts = [];
     if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['cancel', 'Stop sending', 'btn-danger-ghost']);
-    else acts.push(['dup', 'Duplicate', 'btn-primary']);
+    else acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
   }
   $('#dr-body').addEventListener('click', async e => {
@@ -326,6 +341,7 @@
     try {
       if (b.dataset.act === 'edit') location.hash = `compose?edit=${j.id}`;
       if (b.dataset.act === 'dup') location.hash = `compose?dup=${j.id}`;
+      if (b.dataset.act === 'again') location.hash = `compose?again=${j.id}`;
       if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts within a minute and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
         await api(`jobs/${j.id}/send-now`, { method: 'POST' }); toast('Sending starts within a minute'); await loadJobs(); fillDrawer(findJob(j.id));
       }
@@ -449,18 +465,21 @@
     await Promise.all([loadGroups(), loadLists()]);
     const p = S.params; let c = blankCompose(); let note = '';
     const fromJob = id => findJob(Number(id));
-    if (p.edit || p.dup) {
-      const j = fromJob(p.edit || p.dup);
+    if (p.edit || p.dup || p.again) {
+      const j = fromJob(p.edit || p.dup || p.again);
       if (!j) { toast('That message is no longer available', true); location.hash = 'scheduled'; return; }
       if (p.edit && j.status !== 'scheduled') { toast("This message has started sending, so it can't be edited. You can duplicate it.", true); location.hash = `compose?dup=${j.id}`; return; }
       c.mode = p.edit ? 'edit' : 'dup'; c.id = p.edit ? j.id : null;
+      if (p.again) c.mode = 'again';
       c.message = j.message; j.groups.forEach(g => c.picked.set(g.id, { id: g.id, name: g.name }));
       c.imageLink = j.imageUrl || null; c.linkPreview = j.linkPreview;
       if (p.edit) { c.date = j.date; c.time = j.time; c.repeat = [...j.repeatDays]; c.keepImage = j.hasImage; c.imageUrl = j.hasImage ? `api/jobs/${j.id}/image` : null; }
       else { c.time = j.time; c.repeat = [...j.repeatDays]; }
+      if (p.again) { let next = j.runAt + 7 * DAY; while (next < Date.now() + 5 * 60000) next += 7 * DAY; c.date = ist(next).date; c.time = ist(next).time; }
       c.gapMin = j.gapMin; c.gapMax = j.gapMax;
       c.pace = j.gapMin === 60 && j.gapMax === 180 ? 'gentle' : j.gapMin === 40 && j.gapMax === 120 ? 'standard' : 'custom';
-      if (p.dup && (j.hasImage || j.imagePurged)) note = "The uploaded image from the original isn't copied. Add it again if you need it.";
+      if ((p.dup || p.again) && (j.hasImage || j.imagePurged)) note = "The uploaded image from the original isn't copied. Add it again if you need it.";
+      else if (p.again) note = `Copied from ${shortDate(j.runAt)}. Moved to ${shortDate(istEpoch(c.date, c.time))}; check the date and the text.`;
       if (p.edit && j.imagePurged) note = 'The uploaded image was already deleted. Add it again if you need it.';
     } else {
       const d = store.get(DRAFT_KEY);
@@ -473,7 +492,7 @@
       if (p.list) { const l = S.lists.find(x => String(x.id) === p.list); if (l) { c.picked = new Map(l.groups.map(g => [g.id, g])); note = `Groups from "${l.name}".`; } }
     }
     S.compose = c;
-    $('#compose-title').textContent = { new: 'New message', edit: 'Edit message', dup: 'Send again' }[c.mode];
+    $('#compose-title').textContent = { new: 'New message', edit: 'Edit message', dup: 'Duplicate message', again: 'Repeat from last week' }[c.mode];
     $('#compose-lede').textContent = c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.';
     $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
     $('#job-error').textContent = '';
@@ -486,6 +505,7 @@
     $('#repeat-on').checked = c.repeat.length > 0;
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
     $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : 'Cancel';
+    c.pvIdx = 0;
     renderPicker(); renderDayChips(); renderPace(); renderImage(); updateCompose();
     if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
   }
@@ -556,7 +576,35 @@
 
   // message
   $('#message').addEventListener('input', e => { C().message = e.target.value; markDirty(); });
+  $('#message').addEventListener('keydown', e => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key === 'Enter') { e.preventDefault(); if (!$('#job-submit').disabled) form.requestSubmit(); return; }
+    const wrap = mod && { b: '*', i: '_' }[e.key.toLowerCase()];
+    if (wrap) { e.preventDefault(); $(`.toolbar [data-wrap="${wrap}"]`).click(); }
+  });
+  // Paste or drop an image straight into the editor
+  function takeImageFile(f) {
+    if (!f || !f.type.startsWith('image/')) return false;
+    const input = $('#image'); const dt = new DataTransfer(); dt.items.add(f); input.files = dt.files;
+    input.dispatchEvent(new Event('change')); return true;
+  }
+  $('#message').addEventListener('paste', e => {
+    const f = [...(e.clipboardData?.files || [])].find(x => x.type.startsWith('image/'));
+    if (f) { e.preventDefault(); if (takeImageFile(f)) toast('Image attached'); }
+  });
+  const editorEl = $('.editor');
+  ['dragenter', 'dragover'].forEach(ev => editorEl.addEventListener(ev, e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); editorEl.classList.add('dragging'); } }));
+  ['dragleave', 'drop'].forEach(ev => editorEl.addEventListener(ev, e => { if (ev === 'dragleave' && editorEl.contains(e.relatedTarget)) return; editorEl.classList.remove('dragging'); }));
+  editorEl.addEventListener('drop', e => {
+    const f = [...(e.dataTransfer?.files || [])].find(x => x.type.startsWith('image/'));
+    if (f) { e.preventDefault(); if (takeImageFile(f)) toast('Image attached'); }
+  });
+  function insertAtCursor(txt) {
+    const ta = $('#message'); const { selectionStart: s0, selectionEnd: s1 } = ta;
+    ta.setRangeText(txt, s0, s1, 'end'); ta.focus(); C().message = ta.value; markDirty();
+  }
   $('.toolbar').addEventListener('click', e => {
+    const ins = e.target.closest('[data-insert]'); if (ins) { insertAtCursor(ins.dataset.insert); return; }
     const b = e.target.closest('[data-wrap]'); if (!b) return;
     const ta = $('#message'), w = b.dataset.wrap, { selectionStart: s, selectionEnd: en, value: v } = ta;
     const sel = v.slice(s, en) || 'text';
@@ -657,19 +705,24 @@
     // counter
     const n = c.message.length; const counter = $('#msg-count');
     counter.textContent = `${n} / 4000`; counter.classList.toggle('near', n > 3600);
-    // phone
-    $('#pv-group').textContent = picked[0]?.name || 'Your group';
-    $('#pv-more').textContent = picked.length > 1 ? `and ${plural(picked.length - 1, 'other group')}` : picked.length ? 'WhatsApp group' : 'Pick groups to preview';
-    $('#pv-text').innerHTML = c.message.trim() ? waFormat(c.message) : '<span class="placeholder">Your message appears here as the group will see it.</span>';
+    // timing (needed by the preview's {day}/{date})
+    const validTime = c.date && /^\d{2}:\d{2}$/.test(c.time || '');
+    const runAt = validTime ? istEpoch(c.date, c.time) : null;
+    // phone: preview as one specific group sees it
+    const ph = hasPlaceholders(c.message);
+    const pvGroup = picked.length ? picked[(c.pvIdx || 0) % picked.length] : null;
+    $('#pv-group').textContent = pvGroup?.name || 'Your group';
+    $('#pv-more').textContent = ph && picked.length > 1 ? `Group ${((c.pvIdx || 0) % picked.length) + 1} of ${picked.length}` : picked.length > 1 ? `and ${plural(picked.length - 1, 'other group')}` : picked.length ? 'WhatsApp group' : 'Pick groups to preview';
+    $('#pv-next').classList.toggle('hidden', !(ph && picked.length > 1));
+    const shown = renderMessage(c.message, pvGroup?.name, runAt || Date.now());
+    $('#pv-text').innerHTML = c.message.trim() ? waFormat(shown) : '<span class="placeholder">Your message appears here as the group will see it.</span>';
     const links = c.message.match(/https?:\/\/[^\s<]+[^\s<.,!?)]/g) || [];
     const hasImg = !!(c.imageLink || c.imageUrl);
     $('#link-preview-row').classList.toggle('hidden', !links.length || hasImg);
     const showCard = links.length && c.linkPreview && !hasImg;
     $('#pv-link').classList.toggle('hidden', !showCard);
     if (showCard) { try { const u = new URL(links[0]); $('#pv-link-host').textContent = u.hostname.replace(/^www\./, ''); $('#pv-link-url').textContent = links[0]; } catch { $('#pv-link').classList.add('hidden'); } }
-    // timing
-    const validTime = c.date && /^\d{2}:\d{2}$/.test(c.time || '');
-    const runAt = validTime ? istEpoch(c.date, c.time) : null;
+    renderUsual(picked);
     $('#pv-time').textContent = validTime ? c.time : '';
     const others = S.upcoming.filter(j => j.id !== c.id);
     let start = runAt, queuedAfter = null;
@@ -697,6 +750,13 @@
     if (links.some(l => shorteners.test(l))) checks.push(['warn', 'Short links (bit.ly and similar) are often treated as spam. Use the full link.']);
     if (links.length > 3) checks.push(['warn', `This has ${links.length} links. Messages with many links look like spam; keep it to one or two.`]);
     if (links.length && hasImg) checks.push(['ok', 'With an image attached, the link is sent in the caption without a preview card.']);
+    for (const issue of dateSense(c.message, runAt, $('#repeat-on').checked ? c.repeat : [])) checks.push(['warn', issue.text, issue.fixDate ? { fix: issue.fixDate } : null]);
+    const unk = unknownPlaceholders(c.message);
+    if (unk.length) checks.push(['warn', `${unk.map(k => `{${k}}`).join(', ')} isn't a placeholder WA Box knows, so it will be sent exactly as typed. Use {group}, {day} or {date}.`]);
+    if (runAt && s.quietStart) {
+      const inQuiet = (a, b, x) => a <= b ? x >= a && x < b : x >= a || x < b;
+      if (inQuiet(s.quietStart, s.quietEnd, c.time)) checks.push(['warn', `${c.time} is during quiet hours (${s.quietStart}–${s.quietEnd}). People will get it at night.`]);
+    }
     const gone = picked.filter(g => !S.groups.some(x => x.id === g.id));
     if (gone.length) checks.push(['bad', `${plural(gone.length, 'group')} ${gone.length === 1 ? 'is' : 'are'} no longer available. Remove ${gone.length === 1 ? 'it' : 'them'} to continue.`]);
     if (c.pace === 'custom' && (c.gapMin < 30 || c.gapMax < c.gapMin)) checks.push(['warn', 'Waits under 30 seconds are raised to 30, and the longest wait must be at least the shortest.']);
@@ -707,7 +767,7 @@
       const planned = sameDay.reduce((n, j) => n + j.groups.length, 0) + (day === todayKey() ? s.sentToday || 0 : 0);
       if (planned + picked.length > s.dailyCap) {
         const over = planned + picked.length - s.dailyCap;
-        checks.push(['warn', `That day already has ${planned} planned. ${plural(Math.min(over, picked.length), 'group')} will go past the daily limit of ${s.dailyCap} and get it after midnight.`]);
+        checks.push(['warn', `That day already has ${planned} planned. ${plural(Math.min(over, picked.length), 'group')} will go past the daily limit of ${s.dailyCap} and get it the next morning.`]);
       }
       const msg = c.message.trim();
       const dupes = sameDay.filter(j => j.message.trim() === msg && j.groups.some(g => c.picked.has(g.id)));
@@ -717,18 +777,54 @@
     if (s.wa.status && s.wa.status !== 'ready') checks.push(['warn', "WhatsApp isn't connected right now. This will wait until it is."]);
     if (s.dryRun) checks.push(['warn', "Practice mode is on, so this won't actually reach WhatsApp."]);
     if (!checks.some(x => x[0] === 'bad')) checks.push(['ok', `Each group gets it once, ${pacingLabel({ gapMin: Math.max(30, c.gapMin), gapMax: Math.max(30, c.gapMin, c.gapMax) })}, after a few seconds of "typing…".`]);
-    $('#checks').innerHTML = checks.map(([k, t]) => `<li class="${k}">${k === 'ok' ? ICON.ok : ICON.warn}<span>${esc(t)}</span></li>`).join('');
+    $('#checks').innerHTML = checks.map(([k, t, act]) => `<li class="${k}">${k === 'ok' ? ICON.ok : ICON.warn}<span>${esc(t)}</span>${act?.fix ? `<button type="button" class="btn btn-ghost btn-sm fix" data-fix="${act.fix}">Move to ${esc(shortDate(istEpoch(act.fix, c.time)))}</button>` : ''}</li>`).join('');
     // submit
     const blocked = checks.some(x => x[0] === 'bad');
     const btn = $('#job-submit'); btn.disabled = blocked;
     btn.textContent = c.mode === 'edit' ? 'Save changes' : runAt && !blocked ? `Schedule for ${relDay(runAt) || shortDate(runAt)}, ${c.time}` : 'Schedule';
   }
+  $('#checks').addEventListener('click', e => {
+    const b = e.target.closest('[data-fix]'); if (!b) return;
+    const c = C(); c.date = b.dataset.fix; $('#date').value = c.date; renderDayChips(); markDirty(); toast(`Moved to ${shortDate(istEpoch(c.date, c.time))}`);
+  });
+  $('#pv-next').addEventListener('click', () => { const c = C(); c.pvIdx = (c.pvIdx || 0) + 1; updateCompose(); });
+
+  // "Weekend cohorts usually goes out Sat at 10:00 · Use that"
+  function usualFor(picked) {
+    const ids = new Set(picked.map(g => g.id));
+    return S.lists.find(l => l.usual && l.groups.length && l.groups.every(g => ids.has(g.id)) && l.groups.length >= ids.size * 0.8);
+  }
+  function usualDate(u) {
+    const nowIst = ist(Date.now());
+    for (let i = 0; i < 8; i++) { const x = ist(Date.now() + i * DAY); if (x.dow === u.dow && (i > 0 || u.time > nowIst.time)) return x.date; }
+    return null;
+  }
+  function renderUsual(picked) {
+    const c = C(); const el = $('#usual');
+    const l = c.mode === 'edit' ? null : usualFor(picked);
+    const d = l && usualDate(l.usual);
+    const same = l && c.date === d && c.time === l.usual.time && c.gapMin === l.usual.gapMin && c.gapMax === l.usual.gapMax;
+    if (!l || !d || same) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.innerHTML = `<span>“${esc(l.name)}” usually goes out ${DAYS_FULL[l.usual.dow]} at ${esc(l.usual.time)}${l.usual.repeat.length ? `, every ${esc(repeatLabel(l.usual.repeat))}` : ''}.</span><button type="button" class="btn btn-ghost" data-usual="${l.id}">Use that</button>`;
+  }
+  $('#usual').addEventListener('click', e => {
+    const b = e.target.closest('[data-usual]'); if (!b) return;
+    const c = C(); const l = S.lists.find(x => String(x.id) === b.dataset.usual); const u = l.usual;
+    c.date = usualDate(u); c.time = u.time; c.gapMin = u.gapMin; c.gapMax = u.gapMax;
+    c.pace = u.gapMin === 60 && u.gapMax === 180 ? 'gentle' : u.gapMin === 40 && u.gapMax === 120 ? 'standard' : 'custom';
+    if (u.repeat.length) { c.repeat = [...u.repeat]; $('#repeat-on').checked = true; $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); }); }
+    $('#date').value = c.date; $('#time').value = c.time; $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax;
+    renderDayChips(); renderPace(); markDirty();
+  });
   function i18nTime(t, runAt) { return (t - runAt < 60000 ? '' : '~') + ist(t).time; }
 
   $('#test-send').addEventListener('click', async () => {
     const c = C();
     if (!c.message.trim() && !c.imageUrl && !c.imageLink) { toast('Write the message first', true); return; }
-    const fd = new FormData(); fd.set('message', c.message); fd.set('linkPreview', c.linkPreview ? '1' : '0');
+    const first = [...c.picked.values()].sort(byName)[(c.pvIdx || 0) % Math.max(1, c.picked.size)];
+    const at = c.date && c.time ? istEpoch(c.date, c.time) : Date.now();
+    const fd = new FormData(); fd.set('message', renderMessage(c.message, first?.name, at)); fd.set('linkPreview', c.linkPreview ? '1' : '0');
     if (c.image) fd.set('image', c.image); else if (c.imageLink) fd.set('imageUrl', c.imageLink); else if (c.keepImage && c.id) fd.set('jobImage', String(c.id));
     const b = $('#test-send'); b.disabled = true;
     try { const r = await api('test-send', { method: 'POST', form: fd }); toast(`Test sent to ${r.to}. Open "Message yourself" in WhatsApp.`); $('#test-hint').textContent = `Last test sent ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}. Check the "Message yourself" chat on the phone.`; }
@@ -930,6 +1026,36 @@
   ['#decisions', '#log-table'].forEach(sel => $(sel).addEventListener('click', async e => {
     const r = e.target.closest('[data-job]'); if (!r) return; e.preventDefault(); await loadJobs(); openDrawer(Number(r.dataset.job));
   }));
+
+  // ============ Keyboard shortcuts ============
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  $('#mod-key').textContent = isMac ? '⌘' : 'Ctrl';
+  function showShortcuts() {
+    const m = isMac ? '⌘' : 'Ctrl';
+    dialog({ title: 'Keyboard shortcuts', ok: null, cancel: 'Close', html: `<dl class="keys">
+      <dt><kbd>N</kbd></dt><dd>New message</dd>
+      <dt><kbd>/</kbd></dt><dd>Search groups (while writing)</dd>
+      <dt><kbd>${m}</kbd> <kbd>↵</kbd></dt><dd>Schedule the message</dd>
+      <dt><kbd>${m}</kbd> <kbd>B</kbd> / <kbd>${m}</kbd> <kbd>I</kbd></dt><dd>Bold / italic</dd>
+      <dt><kbd>G</kbd> then <kbd>T</kbd> / <kbd>S</kbd> / <kbd>H</kbd></dt><dd>Go to Today / Scheduled / Sent</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close a panel</dd>
+      <dt><kbd>?</kbd></dt><dd>This list</dd></dl>` });
+  }
+  $('#shortcuts-open').addEventListener('click', showShortcuts);
+  let gPending = 0;
+  document.addEventListener('keydown', e => {
+    if (!S.me || e.metaKey || e.ctrlKey || e.altKey || $('#dialog').open) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable) return;
+    if (e.key === '?') { e.preventDefault(); showShortcuts(); return; }
+    if (e.key === 'n' || e.key === 'N') { e.preventDefault(); location.hash = 'compose'; return; }
+    if (e.key === '/' && S.view === 'compose') { e.preventDefault(); $('#group-search').focus(); return; }
+    if (e.key === 'g') { gPending = Date.now(); return; }
+    if (Date.now() - gPending < 1200) {
+      const to = { t: 'today', s: 'scheduled', h: 'sent' }[e.key];
+      if (to) { e.preventDefault(); location.hash = to; } gPending = 0;
+    }
+  });
 
   boot();
 })();

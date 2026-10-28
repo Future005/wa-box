@@ -21,6 +21,9 @@ const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db'
 const wa = require('./wa');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');
+const { renderMessage } = require('./render');
+// The text a given group actually receives (placeholders filled in).
+const textFor = (job, group) => renderMessage(job.message, { groupName: group.name, at: job.run_at });
 const { istDayKey, nextIstMidnight, nextWeeklyOccurrence, formatIst: rawIst, prettyIst: formatIst, epochToIst } = require('./time');
 
 const FAST = process.env.WABOX_TEST_FAST === '1';   // tests only: seconds become milliseconds
@@ -155,7 +158,7 @@ async function foundInChat(groupId, message, since) {
 
 async function resolveUncertain(job, group, row, reason) {
   await sleep(VERIFY_DELAY_MS);
-  const found = await foundInChat(group.id, job.message, row.attempt_at || Date.now());
+  const found = await foundInChat(group.id, textFor(job, group), row.attempt_at || Date.now());
   if (found) {
     upsertSend(job, group, { status: 'sent', sent_at: Date.now(), verified: 1, error: null });
     logEvent('info', 'verify', `Reply was lost (${reason}) but the message is in the chat. Marked sent, not resending.`, { jobId: job.id, group: group.name });
@@ -232,6 +235,7 @@ function markMissed(job, reason) {
 
 // ---------- the send of one message to one group ----------
 async function sendToGroup(job, group, cfg, msgHash) {
+  const text = textFor(job, group);
   const prev = getSend(job, group.id);
   const attempts = (prev?.attempts || 0) + 1;
   // Write-ahead: recorded before the request leaves.
@@ -244,17 +248,17 @@ async function sendToGroup(job, group, cfg, msgHash) {
   const t0 = Date.now();
   try {
     try { await wa.typing(group.id, 'typing'); } catch { /* non-fatal */ }
-    await sleep(FAST ? 1 : Math.min(5000, 2000 + job.message.length * 15) + rand(0, 800));
+    await sleep(FAST ? 1 : Math.min(5000, 2000 + text.length * 15) + rand(0, 800));
     let r;
     if (job.media_url) {
-      r = await wa.sendImageUrl(group.id, job.media_url, job.message);
+      r = await wa.sendImageUrl(group.id, job.media_url, text);
     } else if (job.media_file) {
       const buf = fs.readFileSync(path.join(DATA_DIR, 'media', job.media_file));
-      r = await wa.sendImage(group.id, buf.toString('base64'), job.media_mime, job.message);
+      r = await wa.sendImage(group.id, buf.toString('base64'), job.media_mime, text);
     } else if (job.media_purged) {
       throw Object.assign(new Error('The image was already deleted from WA Box. Duplicate the message and attach it again.'), { status: 410 });
     } else {
-      r = await wa.sendText(group.id, job.message, { linkPreview: job.link_preview !== 0 });
+      r = await wa.sendText(group.id, text, { linkPreview: job.link_preview !== 0 });
     }
     try { await wa.typing(group.id, 'paused'); } catch { /* non-fatal */ }
     upsertSend(job, group, { status: 'sent', sent_at: Date.now(), wa_message_id: r?.messageId || r?.id || null });
@@ -290,7 +294,6 @@ async function runJob(job) {
   state.runningJobId = job.id;
   db.prepare("UPDATE jobs SET status='running', note='', updated_at=? WHERE id=?").run(Date.now(), job.id);
   logEvent('info', 'job', `Started: ${JSON.parse(job.groups_json).length} groups${cfg.dryRun ? ' (practice mode)' : ''}`, { jobId: job.id });
-  const msgHash = hashMessage(job.message, job.media_url || job.media_file);
   const groups = JSON.parse(job.groups_json);
   const gapMin = Math.max(HARD_MIN_GAP_S, job.gap_min);
   const gapMax = Math.max(gapMin, job.gap_max);
@@ -301,6 +304,8 @@ async function runJob(job) {
     if (existing && ['sending', 'uncertain'].includes(existing.status)) continue; // handled by recovery
     if (existing && existing.status === 'failed' && !existing.override) continue;
 
+    // Hash of exactly what this group gets, so {group}/{day}/{date} don't defeat the duplicate guard.
+    const msgHash = hashMessage(textFor(job, group), job.media_url || job.media_file);
     if (!savedGroups.get(group.id)) {
       upsertSend(job, group, { status: 'skipped', error: 'Group is no longer in the saved list (left it, renamed, or no longer matches the keywords)' });
       logEvent('warn', 'send', 'Skipped: group no longer in saved list', { jobId: job.id, group: group.name });

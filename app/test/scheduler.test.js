@@ -83,7 +83,7 @@ before(async () => {
 });
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
-  for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks']) db.exec(`DELETE FROM ${t}`);
+  for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists']) db.exec(`DELETE FROM ${t}`);
   Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready' });
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
   Object.assign(sched.state, { lastSentAt: 0, consecutiveFailures: 0, leader: false, busy: false, stopping: false });
@@ -364,4 +364,32 @@ test('unused image files (e.g. replaced while editing) are cleaned up', async ()
   const old = (Date.now() - 2 * 3600e3) / 1000; fs.utimesSync(f, old, old);
   sched.purgeMedia(Date.now());
   assert.ok(!fs.existsSync(f));
+});
+
+test('{group}: each group gets its own name; duplicate guard and send check use the filled-in text', async () => {
+  addGroups(1, 2);
+  gw.behaviour[G(2).id] = ['timeout_delivered', 'ok'];
+  const id = addJob({ groups: [1, 2], message: 'Hi {group} 👋 see you {day}' });
+  await runUntilIdle();
+  const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][time.epochToIst(job(id).run_at).dow];
+  assert.equal(gw.delivered.find(d => d.chatId === G(1).id).text, `Hi Group 1 👋 see you ${day}`);
+  assert.equal(gw.delivered.find(d => d.chatId === G(2).id).text, `Hi Group 2 👋 see you ${day}`);
+  assert.equal(gw.calls[G(2).id], 1, 'lost reply was verified in the chat, not resent');
+  assert.deepEqual(sends(id).map(s => s.status), ['sent', 'sent']);
+  // Same template again to the same groups is still caught as a duplicate.
+  const again = addJob({ groups: [1, 2], message: 'Hi {group} 👋 see you {day}' });
+  await runUntilIdle();
+  assert.deepEqual(sends(again).map(s => s.status), ['blocked_duplicate', 'blocked_duplicate']);
+});
+
+test('remembered times: a list remembers the day, time and pacing it was last sent with', () => {
+  const groups = require('../src/groups');
+  addGroups(1, 2, 3);
+  const listId = groups.saveList({ name: 'Weekend', groupIds: [G(1).id, G(2).id] }, 'test');
+  groups.rememberUsage([G(1).id, G(2).id], { time: '10:00', dow: 6, gapMin: 60, gapMax: 180, repeat: [6, 0] });
+  const l = groups.lists().find(x => x.id === Number(listId));
+  assert.deepEqual(l.usual, { time: '10:00', dow: 6, gapMin: 60, gapMax: 180, repeat: [6, 0] });
+  // A message to a different set of groups doesn't overwrite it.
+  groups.rememberUsage([G(3).id], { time: '18:00', dow: 4, gapMin: 40, gapMax: 120, repeat: [] });
+  assert.equal(groups.lists().find(x => x.id === Number(listId)).usual.time, '10:00');
 });

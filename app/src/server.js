@@ -125,6 +125,7 @@ api.get('/status', (req, res) => {
   res.json({
     wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, error: req.user.role === 'admin' ? s.wa.error : undefined },
     dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
+    quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: process.env.WABOX_LOCAL === 'true',
     sentToday: sched.sentToday(), issues: alerts.openIssues().length,
     running: running ? { ...running, group: s.currentGroup, nextSendAt: s.nextSendAt } : null,
     now: Date.now(), today: epochToIst(Date.now()).date,
@@ -323,6 +324,7 @@ api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
     repeat_days,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?)`)
     .run(v.title, v.message, media?.name || null, media?.mime || null, v.imageUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt,
       v.runAt + sched.jitter(), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, req.user.username, now, now);
+  savedGroups.rememberUsage(v.chosen.map(g => g.id), { time: v.time, dow: epochToIst(v.runAt).dow, gapMin: v.gapMin, gapMax: v.gapMax, repeat: v.repeatDays });
   audit(req.user.username, 'job_created', `#${r.lastInsertRowid} ${v.chosen.length} groups at ${formatIst(v.runAt)}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 }));
@@ -436,6 +438,11 @@ api.put('/settings', requireAdmin, wrap(async (req, res) => {
     setSetting('alert_wa_numbers', [...new Set(nums)].slice(0, 5)); audit(req.user.username, 'alert_channel', `${nums.length} WhatsApp number(s)`);
   }
   if (typeof b.alertDigest === 'boolean') setSetting('alert_digest', b.alertDigest);
+  for (const [k, key] of [['quietStart', 'quiet_start'], ['quietEnd', 'quiet_end']]) {
+    if (b[k] === undefined) continue;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[k]))) throw bad('Quiet hours need a time like 22:00');
+    setSetting(key, String(b[k]));
+  }
   res.json({ ok: true });
 }));
 

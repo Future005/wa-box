@@ -1,7 +1,7 @@
 // Saved group list. WhatsApp is only asked for the group list when someone presses
 // "Sync from WhatsApp" (or once, automatically, the first time WhatsApp connects).
 // Everything else (the picker, job validation, the scheduler) reads this table instantly.
-const { db, getSetting, setSetting, audit } = require('./db');
+const { db, getSetting, setSetting, audit, addColumn } = require('./db');
 const wa = require('./wa');
 
 db.exec(`
@@ -96,13 +96,33 @@ CREATE TABLE IF NOT EXISTS group_lists (
 );
 `);
 
+// What the team last did with each list, offered as a suggestion next time.
+addColumn('group_lists', 'last_time', 'TEXT');
+addColumn('group_lists', 'last_dow', 'INTEGER');
+addColumn('group_lists', 'last_gap_min', 'INTEGER');
+addColumn('group_lists', 'last_gap_max', 'INTEGER');
+addColumn('group_lists', 'last_repeat', 'TEXT');
+
 function lists() {
   return db.prepare('SELECT * FROM group_lists ORDER BY name COLLATE NOCASE').all().map(l => {
     const ids = JSON.parse(l.group_ids);
     const groups = ids.map(id => get(id) || { id, name: null });
     return { id: l.id, name: l.name, createdBy: l.created_by, updatedAt: l.updated_at,
-      groups: groups.filter(g => g.name), missing: groups.filter(g => !g.name).length };
+      groups: groups.filter(g => g.name), missing: groups.filter(g => !g.name).length,
+      usual: l.last_time ? { time: l.last_time, dow: l.last_dow, gapMin: l.last_gap_min, gapMax: l.last_gap_max, repeat: JSON.parse(l.last_repeat || '[]') } : null };
   });
+}
+
+/** Remember the time/day/pacing used, for every list whose groups were all included in this message. */
+function rememberUsage(groupIds, { time, dow, gapMin, gapMax, repeat }) {
+  const chosen = new Set(groupIds);
+  for (const l of db.prepare('SELECT id, group_ids FROM group_lists').all()) {
+    const ids = JSON.parse(l.group_ids);
+    if (ids.length && ids.every(id => chosen.has(id)) && ids.length >= chosen.size * 0.8) {
+      db.prepare('UPDATE group_lists SET last_time=?, last_dow=?, last_gap_min=?, last_gap_max=?, last_repeat=? WHERE id=?')
+        .run(time, dow, gapMin, gapMax, JSON.stringify(repeat || []), l.id);
+    }
+  }
 }
 function saveList({ id, name, groupIds }, by) {
   name = String(name || '').trim().slice(0, 60);
@@ -120,4 +140,4 @@ function saveList({ id, name, groupIds }, by) {
 }
 function deleteList(id) { db.prepare('DELETE FROM group_lists WHERE id=?').run(Number(id)); }
 
-module.exports = { list, get, count, startSync, status, keywords, setKeywords, matches, lists, saveList, deleteList };
+module.exports = { list, get, count, startSync, status, keywords, setKeywords, matches, lists, saveList, deleteList, rememberUsage };

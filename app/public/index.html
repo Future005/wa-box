@@ -70,6 +70,7 @@
           <span class="dot" id="conn-dot"></span>
           <span class="conn-text"><b id="conn-title">Checking WhatsApp…</b><small id="conn-sub"></small></span>
         </a>
+        <button type="button" class="shortcut-link" id="shortcuts-open"><kbd>?</kbd> Keyboard shortcuts</button>
         <div class="me">
           <span class="avatar" id="me-avatar"></span>
           <span class="me-text"><b id="me-name"></b><small id="me-role"></small></span>
@@ -90,6 +91,7 @@
         <div class="statusline" id="statusline"></div>
         <div class="split">
           <div class="col-main">
+            <div id="again-strip"></div>
             <h2 class="sec-title">Coming up</h2>
             <div id="today-agenda" class="agenda"></div>
           </div>
@@ -142,11 +144,16 @@
                   <button type="button" data-wrap="*" title="Bold (*text*)"><b>B</b></button>
                   <button type="button" data-wrap="_" title="Italic (_text_)"><i>I</i></button>
                   <button type="button" data-wrap="~" title="Strikethrough (~text~)"><s>S</s></button>
-                  <button type="button" data-wrap="```" title="Monospace (```text```)" class="mono">{ }</button>
+                  <button type="button" data-wrap="```" title="Monospace (```text```)" class="mono">&lt;/&gt;</button>
+                  <span class="toolbar-sep" aria-hidden="true"></span>
+                  <button type="button" class="ph" data-insert="{group}" title="Each group sees its own name">{group}</button>
+                  <button type="button" class="ph" data-insert="{day}" title="Weekday it's sent, e.g. Saturday">{day}</button>
+                  <button type="button" class="ph" data-insert="{date}" title="Date it's sent, e.g. 31 Oct">{date}</button>
                   <span class="toolbar-spacer"></span>
                   <span class="counter" id="msg-count">0 / 4000</span>
                 </div>
-                <textarea name="message" id="message" rows="9" maxlength="4000" placeholder="Write it exactly as the groups should see it."></textarea>
+                <textarea name="message" id="message" rows="9" maxlength="4000" placeholder="Write it exactly as the groups should see it. Paste or drop an image here too."></textarea>
+                <div class="drop-hint" aria-hidden="true">Drop the image to attach it</div>
                 <div class="editor-foot">
                   <label class="attach" id="attach">
                     <input type="file" name="image" id="image" accept="image/jpeg,image/png,image/webp">
@@ -169,6 +176,7 @@
 
             <fieldset class="block">
               <div class="block-head"><h2>When</h2><span class="block-meta">India time (IST)</span></div>
+              <div class="usual hidden" id="usual"></div>
               <div class="day-chips" id="day-chips"></div>
               <div class="row-2">
                 <label class="fld"><span>Date</span><input name="date" id="date" type="date" required></label>
@@ -205,6 +213,7 @@
               <p class="form-error" id="job-error" role="alert"></p>
               <button type="button" class="btn btn-ghost" id="compose-discard">Discard</button>
               <button type="submit" class="btn btn-primary" id="job-submit">Schedule</button>
+              <span class="kbd-hint" aria-hidden="true"><kbd id="mod-key">Ctrl</kbd> <kbd>↵</kbd></span>
             </div>
           </form>
 
@@ -213,6 +222,7 @@
               <div class="phone-head">
                 <span class="phone-avatar" aria-hidden="true"></span>
                 <span class="phone-title"><b id="pv-group">Your group</b><small id="pv-more">Pick groups to preview</small></span>
+                <button type="button" class="pv-next hidden" id="pv-next" title="Preview another group">Next group ›</button>
               </div>
               <div class="phone-body">
                 <div class="bubble" id="pv-bubble">
@@ -424,6 +434,7 @@
   <dialog id="dialog"><form method="dialog" class="dialog-body"><h3 id="dialog-title"></h3><div id="dialog-content"></div><div class="btn-row end" id="dialog-actions"></div></form></dialog>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
+  <script src="lib.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
