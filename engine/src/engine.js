@@ -1,6 +1,6 @@
 // One WhatsApp Web session in headless Chrome, kept alive.
 //
-// What this file is responsible for (what Gateway used to do for us):
+// What this file is responsible for:
 //  1. Keep the login: LocalAuth stores it on the /data volume; restarts reuse it (no new QR).
 //  2. Self-heal: reconnect after a drop, retry a failed start with backoff, and restart Chrome
 //     when it stops answering, grows past a memory limit, or once a night at ~04:00 IST.

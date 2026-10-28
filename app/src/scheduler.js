@@ -92,7 +92,6 @@ async function refreshWa() {
       wa.start().catch(e => logEvent('error', 'whatsapp', 'Reconnect failed: ' + e.message));
     }
   } catch (e) {
-    if (/not found|404/i.test(e.message)) wa.resetSession();
     state.wa = { ...state.wa, status: 'unreachable', error: e.message, checkedAt: Date.now() };
   }
   const now = state.wa.status;
@@ -236,7 +235,7 @@ function finishOccurrence(job, note = '') {
 function humanError(e) {
   const m = String(e?.message || e || '');
   if (/aborted due to timeout|timeout/i.test(m)) return "WhatsApp didn't reply in time";
-  if (/ECONNREFUSED|fetch failed|ENOTFOUND/i.test(m)) return "Couldn't reach the WhatsApp gateway";
+  if (/ECONNREFUSED|fetch failed|ENOTFOUND/i.test(m)) return "Couldn't reach the WhatsApp engine";
   if (/not a participant|not.*member|forbidden/i.test(m)) return 'This number is not in the group (or was removed)';
   if (/not ready|ENGINE_NOT_READY/i.test(m)) return 'WhatsApp was still starting';
   return m.slice(0, 300);
@@ -288,7 +287,7 @@ async function sendToGroup(job, group, cfg, msgHash) {
   } catch (e) {
     const msg = humanError(e);
     if (wa.definitelyNotSent(e)) {
-      const transient = (e.status === 409) || !e.status;   // engine not ready / gateway unreachable
+      const transient = (e.status === 409) || !e.status;   // engine not ready / engine unreachable
       if (transient && attempts < 2) {
         upsertSend(job, group, { status: 'retry', error: msg });
         logEvent('warn', 'send', `Not sent (${msg}). Will retry once in 90 s.`, { jobId: job.id, group: group.name });

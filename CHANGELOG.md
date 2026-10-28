@@ -18,7 +18,7 @@ The first complete version.
 - "Send these again?" brings last week's messages back on Today.
 
 ### Sending
-- Own WhatsApp engine on `whatsapp-web.js` (replaces Gateway): keeps the login, reconnects, restarts Chrome when it misbehaves, falls back to the last WhatsApp Web version that worked.
+- Own WhatsApp engine on `whatsapp-web.js`: keeps the login, reconnects, restarts Chrome when it misbehaves, falls back to the last WhatsApp Web version that worked.
 - One group at a time with random gaps (30 s minimum), typing indicator, start jitter.
 - Daily and hourly limits; overflow continues the next morning.
 - Write-ahead send log, chat-history check after any unclear result, never a blind resend.

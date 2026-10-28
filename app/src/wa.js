@@ -61,9 +61,5 @@ function definitelyNotSent(err) {
   return ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) || /not configured/.test(err?.message || '');
 }
 
-// Kept for call sites written for the old gateway; there is a single fixed session now.
-const ensureSession = async () => 'wabox';
-const resetSession = () => {};
-
-module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, sendImageUrl, history, receipts,
-  definitelyNotSent, EngineError, GatewayError: EngineError };
+module.exports = { getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, sendImageUrl, history, receipts,
+  definitelyNotSent, EngineError };

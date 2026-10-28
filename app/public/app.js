@@ -919,7 +919,7 @@
     await Promise.all([refreshStatus(), loadGroups()]);
     const s = S.status.wa;
     const ready = s.status === 'ready';
-    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp gateway is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? '+' + esc(s.phone) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
+    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp engine is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? '+' + esc(s.phone) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
     $('#wa-connect').classList.toggle('hidden', ready);
     $('#wa-logout').classList.toggle('hidden', !ready);
     $('#qr-wrap').classList.add('hidden');

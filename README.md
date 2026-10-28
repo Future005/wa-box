@@ -231,8 +231,8 @@ The [user guide](docs/USER-GUIDE.md) covers everything, with pictures. In short:
 
 ### WA Box or a WhatsApp gateway?
 
-Gateways such as Gateway give developers an API to drive a WhatsApp session. WA Box is a finished
-product for one job, with its own small engine on the same proven library underneath.
+A WhatsApp gateway gives developers an API to drive a WhatsApp session. WA Box is a finished
+product for one job, with its own small engine on a proven open-source library underneath.
 
 | | A WhatsApp gateway | WA Box |
 |---|---|---|

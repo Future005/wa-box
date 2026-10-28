@@ -175,7 +175,7 @@ test('crash mid-send, message did not go out: unconfirmed, not resent blindly', 
   assert.equal(sends(id)[0].status, 'unconfirmed');
 });
 
-test('gateway says "not ready" (409): retries once, then sends', async () => {
+test('engine says "not ready" (409): retries once, then sends', async () => {
   addGroups(1);
   gw.behaviour[G(1).id] = ['reject409', 'ok'];
   const id = addJob({ groups: [1] });
