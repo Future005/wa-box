@@ -6,11 +6,12 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 
-const { db, DATA_DIR, getSetting, setSetting, audit } = require('./db');
+const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db');
 const auth = require('./auth');
 const wa = require('./gateway');
 const sched = require('./scheduler');
 const savedGroups = require('./groups');
+const alerts = require('./alerts');
 const { istToEpoch, epochToIst, formatIst } = require('./time');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -46,7 +47,16 @@ app.use(helmet({
 }));
 app.use((req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
+// Container liveness (always 200 while the process runs; used by Docker/Coolify).
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
+// For an outside uptime monitor (UptimeRobot, Better Stack...): 503 when someone should look.
+app.get('/health/monitor', (_req, res) => {
+  const h = sched.health();
+  const waDownLong = h.whatsapp.status !== 'ready' && Date.now() - h.whatsapp.since > 10 * 60 * 1000;
+  const ok = h.scheduler.ok && !waDownLong && !h.settings.paused;
+  res.status(ok ? 200 : 503).json({ ok, scheduler: h.scheduler.ok ? 'running' : 'stalled',
+    whatsapp: h.whatsapp.status === 'ready' ? 'connected' : 'disconnected', sending: h.settings.paused ? 'paused' : 'on' });
+});
 
 // Serve index.html with a <base href> so assets and API calls resolve under /wabox/
 // whether the visitor opened /wabox or /wabox/, and whether or not the proxy strips the prefix.
@@ -114,8 +124,8 @@ api.get('/status', (req, res) => {
   const running = s.runningJobId ? db.prepare('SELECT id,title FROM jobs WHERE id=?').get(s.runningJobId) : null;
   res.json({
     wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, error: req.user.role === 'admin' ? s.wa.error : undefined },
-    dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin,
-    sentToday: sched.sentToday(),
+    dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
+    sentToday: sched.sentToday(), issues: alerts.openIssues().length,
     running: running ? { ...running, group: s.currentGroup, nextSendAt: s.nextSendAt } : null,
     now: Date.now(), today: epochToIst(Date.now()).date,
   });
@@ -225,10 +235,50 @@ api.get('/jobs', (req, res) => {
 
 api.get('/sends', (req, res) => {
   const rows = db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id
-    ORDER BY COALESCE(s.sent_at, s.occurrence) DESC LIMIT 300`).all();
-  res.json({ sends: rows.map(r => ({ id: r.id, jobId: r.job_id, title: r.title, preview: r.message.slice(0, 80),
-    group: r.group_name, status: r.status, error: r.error, at: r.sent_at || r.occurrence })) });
+    ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT 500`).all();
+  res.json({ sends: rows.map(r => ({ id: r.id, jobId: r.job_id, groupId: r.group_id, title: r.title, preview: r.message.slice(0, 80),
+    group: r.group_name, status: r.status, error: r.error, verified: !!r.verified, at: r.sent_at || r.attempt_at || r.occurrence })) });
 });
+
+// Decide about one group after an unclear or failed send.
+api.post('/jobs/:id/groups/:gid/mark-sent', wrap(async (req, res) => {
+  sched.markSent(Number(req.params.id), req.params.gid, req.user.username);
+  audit(req.user.username, 'marked_sent', `#${req.params.id} ${req.params.gid}`);
+  res.json({ ok: true });
+}));
+api.post('/jobs/:id/groups/:gid/send-again', requireAdmin, wrap(async (req, res) => {
+  sched.sendAgain(Number(req.params.id), req.params.gid, req.user.username);
+  audit(req.user.username, 'send_again', `#${req.params.id} ${req.params.gid}`);
+  res.json({ ok: true });
+}));
+
+// Send the message to the connected number's own chat ("Message yourself") to see it on a real phone.
+const testSends = new Map();
+api.post('/test-send', upload.single('image'), wrap(async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message && !req.file) throw bad('Write the message first');
+  if (message.length > 4000) throw bad('Message is too long');
+  const s = sched.state.wa;
+  if (s.status !== 'ready' || !s.phone) throw bad("WhatsApp isn't connected, so a test can't be sent");
+  const last = testSends.get(req.user.id) || 0;
+  if (Date.now() - last < 20000) throw bad('Wait a few seconds between tests');
+  const dayKey = 'test_sends_' + epochToIst(Date.now()).date;
+  const today = getSetting(dayKey, 0);
+  if (today >= 40) throw bad('Daily limit for test messages reached (40). Try again tomorrow.');
+  testSends.set(req.user.id, Date.now()); setSetting(dayKey, today + 1);
+  const chatId = `${String(s.phone).replace(/\D/g, '')}@c.us`;
+  let file = req.file;
+  if (!file && req.body?.jobImage) {
+    const j = db.prepare('SELECT media_file, media_mime FROM jobs WHERE id=?').get(Number(req.body.jobImage));
+    if (j?.media_file) file = { buffer: fs.readFileSync(path.join(DATA_DIR, 'media', j.media_file)), mimetype: j.media_mime };
+  }
+  try {
+    if (file) await wa.sendImage(chatId, file.buffer.toString('base64'), file.mimetype, message);
+    else await wa.sendText(chatId, message);
+  } catch (e) { logEvent('warn', 'test_send', `Test by ${req.user.username} failed: ${e.message}`); throw bad('Test failed: ' + e.message); }
+  logEvent('info', 'test_send', `Test message sent to own number by ${req.user.username}`);
+  res.json({ ok: true, to: '+' + s.phone });
+}));
 
 api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
   const v = await validateJobInput(req.body);
@@ -328,8 +378,80 @@ api.put('/settings', requireAdmin, wrap(async (req, res) => {
     if (!(n >= 5 && n <= 1440)) throw bad('Late window must be 5-1440 minutes');
     setSetting('max_late_min', n);
   }
+  if (b.hourlyCap !== undefined) {
+    const n = Math.round(Number(b.hourlyCap));
+    if (!(n >= 1 && n <= 40)) throw bad('Hourly limit must be 1-40');
+    setSetting('hourly_cap', n); audit(req.user.username, 'hourly_cap', String(n));
+  }
+  if (b.dedupeHours !== undefined) {
+    const n = Math.round(Number(b.dedupeHours));
+    if (!(n >= 0 && n <= 168)) throw bad('Duplicate window must be 0-168 hours');
+    setSetting('dedupe_hours', n); audit(req.user.username, 'dedupe_hours', String(n));
+  }
+  if (b.alertWebhook !== undefined) {
+    const u = String(b.alertWebhook || '').trim();
+    if (u) { let ok = false; try { ok = new URL(u).protocol === 'https:'; } catch { /* invalid */ } if (!ok) throw bad('The alert link must start with https://'); }
+    setSetting('alert_webhook', u); audit(req.user.username, 'alert_channel', u ? 'webhook set' : 'webhook removed');
+  }
+  if (b.alertWaNumbers !== undefined) {
+    const nums = String(b.alertWaNumbers || '').split(/[,\s]+/).map(x => x.replace(/\D/g, '')).filter(Boolean);
+    if (nums.some(n => n.length < 10 || n.length > 15)) throw bad('Phone numbers need the country code, e.g. 9198xxxxxxxx');
+    setSetting('alert_wa_numbers', [...new Set(nums)].slice(0, 5)); audit(req.user.username, 'alert_channel', `${nums.length} WhatsApp number(s)`);
+  }
+  if (typeof b.alertDigest === 'boolean') setSetting('alert_digest', b.alertDigest);
   res.json({ ok: true });
 }));
+
+// ---------- admin: system ----------
+api.get('/system', requireAdmin, (_req, res) => {
+  const cfg = alerts.config();
+  res.json({ health: sched.health(), issues: alerts.openIssues(),
+    alerts: { webhook: cfg.webhookUrl ? cfg.webhookUrl.replace(/^(https:\/\/[^/]+\/).+$/, '$1…') : '', webhookSet: !!cfg.webhookUrl, waNumbers: cfg.waNumbers, digest: cfg.digest },
+    unconfirmed: db.prepare(`SELECT s.job_id, s.group_id, s.group_name, s.status, s.error, s.attempt_at, j.message FROM sends s JOIN jobs j ON j.id=s.job_id
+      WHERE s.status IN ('unconfirmed','sending','uncertain') ORDER BY s.attempt_at DESC LIMIT 50`).all(),
+    version: process.env.SOURCE_COMMIT || process.env.COOLIFY_SOURCE_COMMIT || 'dev', instance: sched.OWNER });
+});
+api.get('/events', requireAdmin, (req, res) => {
+  const level = ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level : null;
+  const q = String(req.query.q || '').trim();
+  const rows = db.prepare(`SELECT * FROM events WHERE (? IS NULL OR level = ? OR (? = 'warn' AND level = 'error'))
+    AND (? = '' OR message LIKE ? OR kind LIKE ? OR group_name LIKE ?) ORDER BY id DESC LIMIT 300`)
+    .all(level, level, level, q, `%${q}%`, `%${q}%`, `%${q}%`);
+  res.json({ events: rows });
+});
+api.post('/alerts/test', requireAdmin, wrap(async (req, res) => {
+  const r = await alerts.test(req.user.username);
+  if (!r.length) throw bad('No alert channel is set up yet. Add a webhook link or a WhatsApp number first.');
+  res.json({ ok: true, delivered: r });
+}));
+api.post('/issues/:key/dismiss', requireAdmin, wrap(async (req, res) => {
+  await alerts.clear(req.params.key);
+  audit(req.user.username, 'issue_dismissed', req.params.key);
+  res.json({ ok: true });
+}));
+
+// ---------- exports (archive) ----------
+const csv = rows => {
+  if (!rows.length) return '';
+  const cols = Object.keys(rows[0]);
+  const cell = v => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) || /^[=+\-@]/.test(t) ? `"${t.replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"` : t; };
+  return [cols.join(','), ...rows.map(r => cols.map(c => cell(r[c])).join(','))].join('\n');
+};
+api.get('/export/:what', requireAdmin, (req, res) => {
+  const ist = ms => (ms ? formatIst(ms) : '');
+  let rows;
+  if (req.params.what === 'sends.csv') {
+    rows = db.prepare(`SELECT s.id, s.job_id, s.group_name, s.status, s.attempts, s.verified, s.attempt_at, s.sent_at, s.error, s.wa_message_id, j.message, j.created_by
+      FROM sends s JOIN jobs j ON j.id=s.job_id ORDER BY s.id DESC`).all().map(r => ({ ...r, attempt_at: ist(r.attempt_at), sent_at: ist(r.sent_at) }));
+  } else if (req.params.what === 'events.csv') {
+    rows = db.prepare('SELECT id, at, level, kind, job_id, group_name, message FROM events ORDER BY id DESC LIMIT 50000').all().map(r => ({ ...r, at: ist(r.at) }));
+  } else if (req.params.what === 'jobs.csv') {
+    rows = db.prepare('SELECT id, status, run_at, repeat_days, gap_min, gap_max, created_by, updated_by, message, groups_json FROM jobs ORDER BY id DESC').all().map(r => ({ ...r, run_at: ist(r.run_at) }));
+  } else return res.status(404).json({ error: 'Not found' });
+  audit(req.user.username, 'export', req.params.what);
+  res.setHeader('Content-Disposition', `attachment; filename="wabox-${req.params.what.replace('.csv', '')}-${epochToIst(Date.now()).date}.csv"`);
+  res.type('text/csv').send(csv(rows));
+});
 
 // ---------- admin: users ----------
 api.get('/users', requireAdmin, (_req, res) => res.json({ users: db.prepare('SELECT id,username,role,must_change,disabled,created_at FROM users ORDER BY username').all() }));
@@ -372,7 +494,17 @@ app.use((err, _req, res, _next) => {
 
 auth.seedAdmin();
 if (getSetting('dry_run', null) === null) setSetting('dry_run', process.env.DRY_RUN !== 'false');
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`WA Box listening on :${PORT} (base path "${BASE_PATH || '/'}"), dry run: ${sched.settings().dryRun}`);
   sched.startLoop();
 });
+// Redeploys send SIGTERM: finish the message in flight, never start another, then exit.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    logEvent('info', 'shutdown', `Received ${sig}; finishing the current send and stopping`);
+    server.close();
+    await sched.stop();
+    process.exit(0);
+  });
+}
+process.on('unhandledRejection', e => logEvent('error', 'crash', 'Unhandled: ' + (e?.stack || e)));

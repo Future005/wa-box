@@ -91,12 +91,33 @@ async function typing(chatId, state = 'typing') {
 
 async function sendText(chatId, text) {
   const id = await ensureSession();
-  return call('POST', `/sessions/${id}/messages/send-text`, { chatId, text });
+  return call('POST', `/sessions/${id}/messages/send-text`, { chatId, text }, { timeoutMs: SEND_TIMEOUT_MS });
 }
 
 async function sendImage(chatId, base64, mimetype, caption) {
   const id = await ensureSession();
-  return call('POST', `/sessions/${id}/messages/send-image`, { chatId, base64, mimetype, caption: caption || undefined }, { timeoutMs: 120000 });
+  return call('POST', `/sessions/${id}/messages/send-image`, { chatId, base64, mimetype, caption: caption || undefined }, { timeoutMs: SEND_TIMEOUT_MS * 2 });
 }
 
-module.exports = { ensureSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, GatewayError };
+/** Recent messages in a chat, read live from WhatsApp Web (oldest first). */
+async function history(chatId, limit = 25) {
+  const id = await ensureSession();
+  const r = await call('GET', `/sessions/${id}/messages/${encodeURIComponent(chatId)}/history?limit=${limit}`, undefined, { timeoutMs: 45000 });
+  return Array.isArray(r) ? r : (r?.data || r?.messages || []);
+}
+
+/**
+ * Did the request definitely NOT send? (rejected by the gateway before sending,
+ * or never reached it). Anything else (timeouts, 5xx, dropped connections) is
+ * "uncertain": the message may or may not have gone out.
+ */
+function definitelyNotSent(err) {
+  if (err instanceof GatewayError) return err.status >= 400 && err.status < 500;
+  const code = err?.cause?.code || err?.code;
+  return ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) || /not configured/.test(err?.message || '');
+}
+const SEND_TIMEOUT_MS = Number(process.env.WABOX_SEND_TIMEOUT_MS || 60000);
+
+function resetSession() { sessionId = null; }
+
+module.exports = { ensureSession, resetSession, getStatus, start, getQr, logout, listGroups, typing, sendText, sendImage, history, definitelyNotSent, GatewayError };

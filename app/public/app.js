@@ -35,16 +35,27 @@
     user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>',
   };
   const STATUS = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done, with errors', cancelled: 'Cancelled',
-    sent: 'Sent', dry_run: 'Practice', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Waiting' };
+    sent: 'Sent', dry_run: 'Practice', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Waiting',
+    sending: 'Sending', uncertain: 'Checking', unconfirmed: 'Unconfirmed', blocked_duplicate: 'Duplicate blocked' };
   const pill = s => `<span class="pill ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
 
-  // WhatsApp-style formatting for the preview
+  // WhatsApp-style formatting for the preview: *bold* _italic_ ~strike~ ```mono``` `code`,
+  // "- " / "* " bullets, "1. " numbered lists, "> " quotes, and links.
+  function waInline(t) {
+    const rule = (ch, tag) => { const c = ch.replace(/[*~]/g, '\\$&'); return [new RegExp(`(^|[\\s(\\[{"'])${c}(?!\\s)([^${c}\\n]*?[^\\s${c}])${c}(?=$|[\\s).,!?:;\\]}"'])`, 'g'), `$1<${tag}>$2</${tag}>`]; };
+    t = t.replace(/`([^`\n]+)`/g, '<span class="ic">$1</span>');
+    for (const [re, rep] of [rule('*', 'b'), rule('_', 'i'), rule('~', 's')]) t = t.replace(re, rep);
+    return t.replace(/(https?:\/\/[^\s<]+[^\s<.,!?)])/g, '<a>$1</a>');
+  }
   function waFormat(text) {
-    let s = esc(text);
-    s = s.replace(/```([\s\S]+?)```/g, '<code>$1</code>');
-    const rule = (ch, tag) => { const c = ch.replace(/[*~]/g, '\\$&'); return [new RegExp(`(^|[\\s(\\[])${c}(?!\\s)([^${c}\\n]*?[^\\s${c}])${c}(?=$|[\\s).,!?:;\\]])`, 'gm'), `$1<${tag}>$2</${tag}>`]; };
-    for (const [re, rep] of [rule('*', 'b'), rule('_', 'i'), rule('~', 's')]) s = s.replace(re, rep);
-    return s;
+    const parts = esc(text).split(/```/);
+    return parts.map((chunk, i) => i % 2 ? `<code>${chunk}</code>` : chunk.split('\n').map(line => {
+      let m;
+      if ((m = line.match(/^&gt; ?(.*)$/))) return `<span class="q">${waInline(m[1]) || '&nbsp;'}</span>`;
+      if ((m = line.match(/^[*-] (.+)$/))) return `<span class="li">• ${waInline(m[1])}</span>`;
+      if ((m = line.match(/^(\d{1,2})\. (.+)$/))) return `<span class="li">${m[1]}. ${waInline(m[2])}</span>`;
+      return waInline(line);
+    }).join('\n')).join('');
   }
 
   // ============ state + API ============
@@ -88,7 +99,7 @@
 
   // ============ screens & routing ============
   function showScreen(name) { for (const id of ['login', 'password', 'app']) $('#view-' + id).classList.toggle('hidden', id !== name); }
-  const ADMIN_VIEWS = new Set(['whatsapp', 'team', 'settings']);
+  const ADMIN_VIEWS = new Set(['whatsapp', 'team', 'settings', 'system']);
   function parseHash() {
     const [v, q] = location.hash.replace(/^#/, '').split('?');
     return { view: v || 'today', params: Object.fromEntries(new URLSearchParams(q || '')) };
@@ -108,7 +119,7 @@
     closeMenu(); closeDrawer(); clearInterval(S.qrTimer);
     window.scrollTo(0, 0);
     const render = { today: renderToday, compose: openCompose, scheduled: renderScheduled, sent: renderSent, templates: renderTemplates,
-      lists: renderLists, whatsapp: renderWhatsapp, team: renderTeam, settings: renderSettings }[view];
+      lists: renderLists, whatsapp: renderWhatsapp, team: renderTeam, settings: renderSettings, system: renderSystem }[view];
     render && render();
   }
   window.addEventListener('hashchange', route);
@@ -175,6 +186,8 @@
     if (wa !== 'ready' && wa !== 'unknown') a.push(['bad', "WhatsApp isn't connected. Scheduled messages will wait until it is.", isAdmin() ? ['Connect', '#whatsapp'] : null]);
     if (s.paused) a.push(['warn', 'Sending is paused. Scheduled messages are waiting.', isAdmin() ? ['Resume', 'resume'] : null]);
     if (s.dryRun) a.push(['warn', "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
+    if (s.issues && isAdmin() && S.view !== 'system') a.push(['bad', `${plural(s.issues, 'issue')} ${s.issues === 1 ? 'needs' : 'need'} attention.`, ['Open System & logs', '#system']]);
+    $('#count-issues').textContent = isAdmin() && s.issues ? s.issues : '';
     $('#alerts').innerHTML = a.map(([c, t, act], i) => `<div class="alert ${c}">${ICON.warn}<span>${esc(t)}</span><span class="spacer"></span>${act ? (act[1].startsWith('#') ? `<a class="btn btn-ghost" href="${act[1]}">${esc(act[0])}</a>` : `<button class="btn btn-ghost" data-alert="${esc(act[1])}">${esc(act[0])}</button>`) : ''}</div>`).join('');
   }
   $('#alerts').addEventListener('click', async e => {
@@ -283,13 +296,30 @@
       </dl>
       <div class="mini-bubble"><div class="bubble">${j.hasImage ? `<img src="api/jobs/${j.id}/image" alt="">` : ''}<div class="bubble-text">${waFormat(j.message)}</div><span class="bubble-time">${ist(j.runAt).time}</span></div></div>
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
-        return `<div><span class="gn">${esc(g.name)}</span>${s ? pill(s.status) : '<span class="pill scheduled">Waiting</span>'}${s?.error ? `<small>${esc(s.error)}</small>` : ''}</div>`; }).join('')}</div></div>`;
+        const canDecide = s && ['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(s.status);
+        const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
+        return `<div><span class="gn">${esc(g.name)}</span>${s ? pill(s.status) : '<span class="pill scheduled">Waiting</span>'}${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
     const acts = [];
     if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['cancel', 'Stop sending', 'btn-danger-ghost']);
-    else acts.push(['dup', 'Send again', 'btn-primary']);
+    else acts.push(['dup', 'Duplicate', 'btn-primary']);
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
   }
+  $('#dr-body').addEventListener('click', async e => {
+    const b = e.target.closest('[data-gact]'); if (!b) return;
+    const j = findJob(S.drawerJob); if (!j) return;
+    const g = j.groups.find(x => x.id === b.dataset.gid);
+    try {
+      if (b.dataset.gact === 'mark') {
+        if (!await dialog({ title: 'Mark as sent?', html: `<p>Only do this after checking that “${esc(g.name)}” has the message in WhatsApp.</p>`, ok: 'Yes, it was sent' })) return;
+        await api(`jobs/${j.id}/groups/${encodeURIComponent(g.id)}/mark-sent`, { method: 'POST' }); toast('Marked as sent');
+      } else {
+        if (!await dialog({ title: `Send again to “${g.name}”?`, html: '<p>Check the group first. If the message is already there, sending again will post it twice.</p>', ok: 'Send again' })) return;
+        await api(`jobs/${j.id}/groups/${encodeURIComponent(g.id)}/send-again`, { method: 'POST' }); toast('Queued. It goes out within a minute.');
+      }
+      await loadJobs(); const fresh = findJob(j.id); if (fresh) fillDrawer(fresh);
+    } catch (err) { toast(err.message, true); }
+  });
   $('#dr-actions').addEventListener('click', async e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const j = findJob(S.drawerJob); if (!j) return;
@@ -323,7 +353,7 @@
   // ============ Sent ============
   async function renderSent() {
     await loadSendsQuiet();
-    const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Failed or skipped', ['failed', 'missed', 'skipped', 'retry']], practice: ['Practice', ['dry_run']] };
+    const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Problems', ['failed', 'missed', 'skipped', 'retry', 'unconfirmed', 'blocked_duplicate', 'uncertain']], practice: ['Practice', ['dry_run']] };
     const count = k => k === 'all' ? S.sends.length : S.sends.filter(s => groups[k][1].includes(s.status)).length;
     $('#sent-tabs').innerHTML = Object.entries(groups).map(([k, [l]]) => `<button role="tab" data-filter="${k}" class="${S.sentFilter === k ? 'on' : ''}">${l}<small>${count(k)}</small></button>`).join('');
     const q = $('#sent-search').value.trim().toLowerCase();
@@ -668,6 +698,17 @@
   }
   function i18nTime(t, runAt) { return (t - runAt < 60000 ? '' : '~') + ist(t).time; }
 
+  $('#test-send').addEventListener('click', async () => {
+    const c = C();
+    if (!c.message.trim() && !c.imageUrl) { toast('Write the message first', true); return; }
+    const fd = new FormData(); fd.set('message', c.message);
+    if (c.image) fd.set('image', c.image); else if (c.keepImage && c.id) fd.set('jobImage', String(c.id));
+    const b = $('#test-send'); b.disabled = true;
+    try { const r = await api('test-send', { method: 'POST', form: fd }); toast(`Test sent to ${r.to}. Open "Message yourself" in WhatsApp.`); $('#test-hint').textContent = `Last test sent ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}. Check the "Message yourself" chat on the phone.`; }
+    catch (err) { toast(err.message, true); }
+    finally { setTimeout(() => { b.disabled = false; }, 3000); }
+  });
+
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const c = C(); $('#job-error').textContent = '';
@@ -781,6 +822,13 @@
     await refreshStatus();
     const s = S.status, f = $('#settings-form');
     f.dryRun.checked = s.dryRun; f.paused.checked = s.paused; f.dailyCap.value = s.dailyCap; f.maxLateMin.value = s.maxLateMin;
+    f.hourlyCap.value = s.hourlyCap; f.dedupeHours.value = s.dedupeHours;
+    try {
+      const sys = await api('system'); const af = $('#alerts-form');
+      af.alertWebhook.value = ''; af.alertWebhook.placeholder = sys.alerts.webhookSet ? 'A link is saved. Paste a new one to replace it.' : 'https://hooks.slack.com/… or Google Chat / Discord webhook';
+      $('#webhook-current').textContent = sys.alerts.webhookSet ? `Saved: ${sys.alerts.webhook}` : 'Slack, Google Chat and Discord all give you a link like this.';
+      af.alertWaNumbers.value = sys.alerts.waNumbers.join(', '); af.alertDigest.checked = sys.alerts.digest;
+    } catch { /* ignore */ }
     try {
       const { audit } = await api('audit');
       const words = { login: 'Signed in', login_failed: 'Failed sign-in', job_created: 'Scheduled a message', job_edited: 'Edited a message', job_cancelled: 'Cancelled a message',
@@ -795,10 +843,64 @@
     e.preventDefault(); const f = e.target; $('#settings-error').textContent = '';
     if (!f.dryRun.checked && S.status.dryRun && !await dialog({ title: 'Go live?', html: '<p>Scheduled messages will really be sent to your WhatsApp groups from now on.</p>', ok: 'Go live' })) return;
     try {
-      await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value) } });
+      await api('settings', { method: 'PUT', body: { dryRun: f.dryRun.checked, paused: f.paused.checked, dailyCap: Number(f.dailyCap.value), maxLateMin: Number(f.maxLateMin.value), hourlyCap: Number(f.hourlyCap.value), dedupeHours: Number(f.dedupeHours.value) } });
       toast('Settings saved'); renderSettings();
     } catch (err) { $('#settings-error').textContent = err.message; }
   });
+
+  $('#alerts-form').addEventListener('submit', async e => {
+    e.preventDefault(); const f = e.target; $('#alerts-error').textContent = '';
+    const body = { alertWaNumbers: f.alertWaNumbers.value, alertDigest: f.alertDigest.checked };
+    if (f.alertWebhook.value.trim()) body.alertWebhook = f.alertWebhook.value.trim();
+    try { await api('settings', { method: 'PUT', body }); toast('Alerts saved'); renderSettings(); }
+    catch (err) { $('#alerts-error').textContent = err.message; }
+  });
+  $('#alert-test').addEventListener('click', async () => {
+    try { const r = await api('alerts/test', { method: 'POST' }); toast('Test alert sent via ' + r.delivered.join(', ')); }
+    catch (err) { toast(err.message, true); }
+  });
+
+  // ============ System (admin) ============
+  S.logLevel = '';
+  async function renderSystem() {
+    let sys;
+    try { sys = await api('system'); } catch (err) { toast(err.message, true); return; }
+    const h = sys.health, now = Date.now();
+    const waOk = h.whatsapp.status === 'ready';
+    const cards = [
+      [h.scheduler.ok ? 'ok' : 'bad', 'Scheduler', h.scheduler.ok ? 'Running' : 'Not responding', `Last check ${ago(h.scheduler.lastTickAt || now)}${h.scheduler.leader ? '' : ' · standby copy'}`],
+      [waOk ? 'ok' : 'bad', 'WhatsApp', waOk ? 'Connected' : (h.whatsapp.status || 'Unknown'), `${waOk ? 'Since' : 'Changed'} ${ago(h.whatsapp.since)}${h.whatsapp.error ? ' · ' + h.whatsapp.error : ''}`],
+      [h.settings.paused ? 'warn' : h.settings.dryRun ? 'warn' : 'ok', 'Sending', h.settings.paused ? 'Paused' : h.settings.dryRun ? 'Practice mode' : 'Live', `${h.queue} scheduled${h.nextJob ? ` · next ${whenLabel(h.nextJob.start_at)}` : ''}`],
+      [h.fail24 ? 'warn' : 'ok', 'Last 24 hours', `${h.sent24} sent · ${h.fail24} problem${h.fail24 === 1 ? '' : 's'}`, h.lastSuccessAt ? `Last successful send ${ago(h.lastSuccessAt)}` : 'Nothing sent yet'],
+    ];
+    $('#health').innerHTML = cards.map(([k, t, v, sub]) => `<div class="hcard ${k === 'ok' ? '' : k}"><small>${t}</small><b><span class="dot ${k}"></span>${esc(v)}</b><span class="sub">${esc(sub)}</span></div>`).join('');
+    $('#decisions').innerHTML = sys.unconfirmed.length ? `<h2 class="sec-title">Needs your decision</h2>` + sys.unconfirmed.map(u => `<div class="decision">
+      <b>Did “${esc(u.group_name)}” get this message?</b><p>${esc(firstLine(u.message))}</p><p>${esc(u.error || (u.status === 'sending' ? 'In progress or interrupted. Being checked now.' : ''))}</p>
+      ${u.status === 'unconfirmed' ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" data-job="${u.job_id}" type="button">Open message</button></div>` : ''}</div>`).join('') : '';
+    $('#issues').innerHTML = sys.issues.map(i => `<div class="issue-row"><span class="dot ${i.level === 'error' ? 'bad' : 'warn'}"></span><span><p>${esc(i.message)}</p><small>${i.last_at ? 'Announced ' + ago(i.last_at) : 'Not announced yet'}</small></span><button class="btn btn-ghost btn-sm" type="button" data-dismiss="${esc(i.key)}">Dismiss</button></div>`).join('');
+    $('#sys-version').textContent = `Version ${String(sys.version).slice(0, 7)} · instance ${sys.instance}`;
+    renderLog();
+  }
+  async function renderLog() {
+    const q = $('#log-search').value.trim();
+    try {
+      const { events } = await api(`events?level=${S.logLevel}&q=${encodeURIComponent(q)}`);
+      $('#log-table tbody').innerHTML = events.length ? events.map(e => `<tr><td class="when">${esc(whenLabel(e.at))}:${pad(new Date(e.at).getSeconds())}</td>
+        <td class="lvl"><span class="lvl-dot ${e.level}"></span>${e.level === 'info' ? 'Info' : e.level === 'warn' ? 'Warning' : 'Error'}</td>
+        <td>${esc(e.kind.replace(/_/g, ' '))}${e.job_id ? ` <a href="#scheduled" data-job="${e.job_id}">#${e.job_id}</a>` : ''}${e.group_name ? `<br><span class="hint">${esc(e.group_name)}</span>` : ''}</td>
+        <td class="detail">${esc(e.message)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No events match.</td></tr>';
+    } catch (err) { toast(err.message, true); }
+  }
+  $('#log-tabs').addEventListener('click', e => { const b = e.target.closest('[data-level]'); if (!b) return; S.logLevel = b.dataset.level; $$('#log-tabs button').forEach(x => x.classList.toggle('on', x === b)); renderLog(); });
+  $('#log-search').addEventListener('input', () => { clearTimeout(S.logT); S.logT = setTimeout(renderLog, 250); });
+  $('#sys-refresh').addEventListener('click', renderSystem);
+  $('#issues').addEventListener('click', async e => {
+    const b = e.target.closest('[data-dismiss]'); if (!b) return;
+    try { await api('issues/' + encodeURIComponent(b.dataset.dismiss) + '/dismiss', { method: 'POST' }); toast('Dismissed'); renderSystem(); refreshStatus(); } catch (err) { toast(err.message, true); }
+  });
+  ['#decisions', '#log-table'].forEach(sel => $(sel).addEventListener('click', async e => {
+    const r = e.target.closest('[data-job]'); if (!r) return; e.preventDefault(); await loadJobs(); openDrawer(Number(r.dataset.job));
+  }));
 
   boot();
 })();

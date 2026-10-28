@@ -51,10 +51,19 @@ function nextWeeklyOccurrence(afterMs, time, days) {
   return null;
 }
 
+const DOW3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "Wed 28 Oct, 18:51" (IST) for people-facing text */
+function prettyIst(ms) {
+  if (!ms) return '';
+  const d = new Date(ms + IST_OFFSET_MS);
+  return `${DOW3[d.getUTCDay()]} ${d.getUTCDate()} ${MON3[d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
 function formatIst(ms) {
   if (!ms) return '';
   const { date, time } = epochToIst(ms);
   return `${date} ${time}`;
 }
 
-module.exports = { IST_OFFSET_MS, DAYS, istToEpoch, epochToIst, istDayKey, nextIstMidnight, nextWeeklyOccurrence, formatIst };
+module.exports = { IST_OFFSET_MS, DAYS, istToEpoch, epochToIst, istDayKey, nextIstMidnight, nextWeeklyOccurrence, formatIst, prettyIst };

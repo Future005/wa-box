@@ -11,6 +11,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src ./src
 COPY public ./public
+COPY test ./test
+# Evals: if any safety test fails, the image doesn't build and Coolify keeps the old version running.
+RUN npm test && rm -rf test /tmp/wabox-test-*
 
 RUN mkdir -p /data && chown -R node:node /data
 USER node

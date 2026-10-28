@@ -84,6 +84,58 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 `);
 
+// ---------- migrations (add columns safely to existing databases) ----------
+function addColumn(table, col, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('sends', 'msg_hash', 'TEXT');
+addColumn('sends', 'attempt_at', 'INTEGER');
+addColumn('sends', 'wa_message_id', 'TEXT');
+addColumn('sends', 'override', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('sends', 'verified', 'INTEGER NOT NULL DEFAULT 0');
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS sends_dedupe ON sends(group_id, msg_hash);
+CREATE INDEX IF NOT EXISTS sends_status ON sends(status);
+-- System event log: every send attempt, outcome, connection change and error.
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  job_id INTEGER,
+  group_name TEXT,
+  message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_at ON events(at);
+-- Single-sender lock so two app copies (e.g. during a redeploy) can never both send.
+CREATE TABLE IF NOT EXISTS locks (
+  name TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alert_log (
+  key TEXT PRIMARY KEY,
+  last_at INTEGER NOT NULL,
+  open INTEGER NOT NULL DEFAULT 1,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL
+);
+`);
+
+/** Write to the event log (and the container log). level: info | warn | error */
+function logEvent(level, kind, message, { jobId = null, group = null } = {}) {
+  const line = `[${level}] ${kind}${jobId ? ` #${jobId}` : ''}${group ? ` (${group})` : ''}: ${message}`;
+  (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(line);
+  try {
+    db.prepare('INSERT INTO events(at,level,kind,job_id,group_name,message) VALUES(?,?,?,?,?,?)')
+      .run(Date.now(), level, kind, jobId, group, String(message).slice(0, 1000));
+  } catch (e) { console.error('[events] could not write:', e.message); }
+}
+// Keep 180 days of events.
+setInterval(() => { try { db.prepare('DELETE FROM events WHERE at < ?').run(Date.now() - 180 * 86400000); } catch { /* ignore */ } }, 6 * 3600 * 1000).unref();
+
 const getSetting = (key, fallback) => {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? JSON.parse(row.value) : fallback;
@@ -95,4 +147,4 @@ const setSetting = (key, value) =>
 const audit = (actor, action, detail = '') =>
   db.prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)').run(Date.now(), actor, action, String(detail).slice(0, 500));
 
-module.exports = { db, DATA_DIR, getSetting, setSetting, audit };
+module.exports = { db, DATA_DIR, getSetting, setSetting, audit, logEvent };

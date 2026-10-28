@@ -61,6 +61,7 @@
           <p class="nav-label">Workspace</p>
           <a href="#whatsapp" data-view="whatsapp"><svg viewBox="0 0 24 24"><path d="M5 19l1.2-3.6A7.5 7.5 0 1 1 9 18.3z"/></svg>WhatsApp &amp; groups</a>
           <a href="#team" data-view="team"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>Team</a>
+          <a href="#system" data-view="system"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>System &amp; logs<span class="nav-count warn" id="count-issues"></span></a>
           <a href="#settings" data-view="settings"><svg viewBox="0 0 24 24"><path d="M5 7h9M18 7h1M5 17h3M12 17h7"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Safety &amp; settings</a>
         </nav>
       </div>
@@ -214,6 +215,10 @@
                 </div>
               </div>
             </div>
+            <div class="test-row">
+              <button type="button" class="btn btn-ghost btn-block" id="test-send"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></svg>Send a test to my WhatsApp</button>
+              <p class="hint" id="test-hint">Goes only to the connected number's own chat ("Message yourself"), so you can see it on a real phone.</p>
+            </div>
             <div class="plan">
               <div class="plan-head"><h2>Send plan</h2><span id="plan-summary"></span></div>
               <ol class="plan-steps" id="plan-steps"></ol>
@@ -318,6 +323,36 @@
         </form>
       </section>
 
+      <!-- System (admin) -->
+      <section class="view" data-view="system">
+        <header class="page-head">
+          <div><h1>System &amp; logs</h1><p class="lede">Is everything working, what needs a decision, and a full record of what happened.</p></div>
+          <div class="head-actions"><button class="btn btn-ghost" type="button" id="sys-refresh">Refresh</button></div>
+        </header>
+        <div class="health" id="health"></div>
+        <div id="decisions"></div>
+        <h2 class="sec-title">Open issues</h2>
+        <div id="issues" class="panel-list"></div>
+        <div class="log-head">
+          <h2 class="sec-title">Event log</h2>
+          <div class="head-actions">
+            <div class="tabs compact" id="log-tabs"><button data-level="" class="on">All</button><button data-level="warn">Warnings</button><button data-level="error">Errors</button></div>
+            <input id="log-search" type="search" placeholder="Search log" aria-label="Search the event log">
+          </div>
+        </div>
+        <div class="table-wrap"><table class="table log" id="log-table"><thead><tr><th>When</th><th>Level</th><th>What</th><th>Details</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel narrow">
+          <h2 class="panel-title">Archive</h2>
+          <p class="hint">Everything is kept: every message, every group, every attempt. Download it any time as a spreadsheet.</p>
+          <div class="btn-row">
+            <a class="btn btn-ghost" href="api/export/sends.csv" download>Every send (CSV)</a>
+            <a class="btn btn-ghost" href="api/export/jobs.csv" download>Every message (CSV)</a>
+            <a class="btn btn-ghost" href="api/export/events.csv" download>Event log (CSV)</a>
+          </div>
+          <p class="hint" id="sys-version"></p>
+        </div>
+      </section>
+
       <!-- Settings (admin) -->
       <section class="view" data-view="settings">
         <header class="page-head">
@@ -329,11 +364,22 @@
             <label class="switch-row"><span><b>Practice mode</b><small>Jobs run on schedule, but nothing is sent to WhatsApp. Use it to try things out.</small></span><span class="switch"><input type="checkbox" name="dryRun"><span class="track"></span></span></label>
             <label class="switch-row"><span><b>Pause all sending</b><small>Scheduled messages wait until you turn this off.</small></span><span class="switch"><input type="checkbox" name="paused"><span class="track"></span></span></label>
             <div class="row-2">
-              <label class="fld"><span>Daily limit</span><input name="dailyCap" type="number" min="1" max="60"><small>Messages per day, across everyone. Extra ones go out after midnight.</small></label>
+              <label class="fld"><span>Daily limit</span><input name="dailyCap" type="number" min="1" max="60"><small>Messages per day, across everyone. Extra ones go out the next morning.</small></label>
+              <label class="fld"><span>Hourly limit</span><input name="hourlyCap" type="number" min="1" max="40"><small>Messages in any 60 minutes.</small></label>
+              <label class="fld"><span>Duplicate guard (hours)</span><input name="dedupeHours" type="number" min="0" max="168"><small>Block the same text to the same group within this many hours. 0 turns it off.</small></label>
               <label class="fld"><span>Skip if late by (minutes)</span><input name="maxLateMin" type="number" min="5" max="1440"><small>If the server was down, don't send hours late.</small></label>
             </div>
             <p class="form-error" id="settings-error"></p>
             <div class="btn-row"><button class="btn btn-primary" type="submit">Save settings</button></div>
+          </form>
+          <form class="panel" id="alerts-form">
+            <h2 class="panel-title">Alerts when nobody is watching</h2>
+            <p class="hint">WA Box tells you if WhatsApp disconnects, sending pauses itself, a send is unclear, or a message is missed. Each problem is announced at most once an hour.</p>
+            <label class="fld"><span>Chat webhook link</span><input name="alertWebhook" type="url" placeholder="https://hooks.slack.com/… or Google Chat / Discord webhook" autocomplete="off"><small id="webhook-current">Slack, Google Chat and Discord all give you a link like this.</small></label>
+            <label class="fld"><span>WhatsApp numbers to alert</span><input name="alertWaNumbers" placeholder="9198xxxxxxxx, 9199xxxxxxxx" autocomplete="off"><small>With country code. Sent from the connected number, so this can't warn you if WhatsApp itself is down. Use the webhook for that.</small></label>
+            <label class="switch-row"><span><b>Morning check-in</b><small>A short summary every day around 8:30 AM. If it doesn't arrive, something is wrong.</small></span><span class="switch"><input type="checkbox" name="alertDigest"><span class="track"></span></span></label>
+            <p class="form-error" id="alerts-error"></p>
+            <div class="btn-row"><button class="btn btn-primary" type="submit">Save alerts</button><button class="btn btn-ghost" type="button" id="alert-test">Send a test alert</button></div>
           </form>
           <div class="panel">
             <h2 class="panel-title">Always on</h2>
@@ -344,10 +390,14 @@
               <li>"Typing…" shows for a few seconds before each message.</li>
               <li>Each group gets a message once per send, even after a restart.</li>
               <li>Nothing sends while WhatsApp is disconnected.</li>
+              <li>If a reply from WhatsApp is lost, the group's chat is checked before anything is resent.</li>
+              <li>Only one copy of WA Box can send at a time, even during an update.</li>
+              <li>Three failures in a row pause sending and alert an admin.</li>
+              <li>Weekly messages never send twice in a day and skip missed weeks instead of catching up.</li>
             </ul>
           </div>
         </div>
-        <h2 class="sec-title">Activity</h2>
+        <h2 class="sec-title">Who changed what</h2>
         <div class="table-wrap"><table class="table" id="audit-table"><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody></tbody></table></div>
       </section>
     </main>
