@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WA Box API
-  version: 1.0.0
+  version: 1.1.0
   summary: Schedule WhatsApp group messages with the same safety rules as the WA Box app.
   description: |
     Everything scheduled through the API goes through exactly the same checks as the app:
@@ -162,19 +162,64 @@ paths:
                 properties:
                   message: { $ref: '#/components/schemas/Message' }
         '404': { $ref: '#/components/responses/NotFound' }
-    delete:
-      summary: Cancel a message that hasn't finished
-      description: A `schedule` key can cancel the messages it scheduled. A `full` key can cancel any. Groups already sent stay sent.
-      operationId: cancelMessage
+    patch:
+      summary: Change a message that hasn't started sending
+      description: |
+        Send only the fields you want to change (same names as POST /messages); everything else is kept.
+        Changing `sendAt` moves it: nothing goes at the old time. For a weekly message the new time becomes its usual time.
+        Refused with 409 once the first group has started; DELETE it instead to stop the rest.
+        A `schedule` key can change the messages it scheduled. A `full` key can change any.
+      operationId: updateMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewMessage' }
+            examples:
+              fixText: { summary: Fix the text, value: { text: 'Class moved to *11:30* today' } }
+              move: { summary: Move it, value: { sendAt: '2026-11-07T11:30:00+05:30' } }
       responses:
         '200':
-          description: Cancelled
+          description: Changed
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   message: { $ref: '#/components/schemas/Message' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Cancel or stop a message, or skip one time of a weekly message
+      description: |
+        Works before and during sending. Groups that already got it keep it; every group still waiting is stopped
+        (WA Box re-checks right before each send, so even a group in its "typing…" pause won't get it).
+        `?scope=this` (weekly messages only) cancels just this time and keeps the repeat.
+        A `schedule` key can cancel the messages it scheduled. A `full` key can cancel any.
+      operationId: cancelMessage
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [all, this], default: all }
+      responses:
+        '200':
+          description: Cancelled (or skipped this time)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: '#/components/schemas/Message' }
+                  result:
+                    type: object
+                    properties:
+                      skippedThisTime: { type: boolean }
+                      groupsSent: { type: integer, description: Groups that already got it }
+                      groupsNotSent: { type: integer, description: Groups that won't get it }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }

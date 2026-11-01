@@ -155,6 +155,46 @@ test('cancel: a schedule key cancels its own messages only; a full key cancels a
   assert.equal((await call('GET', '/messages/99999', { key: full })).status, 404);
 });
 
+test('PATCH: change the text and the time of a waiting message; the old time is gone', async () => {
+  const key = newKey(); const other = newKey();
+  const id = (await call('POST', '/messages', { key, body: { text: 'Class at 10', groups: ['1@g.us'], sendAt: tomorrowAt('10:00') } })).body.message.id;
+  assert.equal((await call('PATCH', `/messages/${id}`, { key: other, body: { text: 'hijack' } })).status, 403);
+  const r = await call('PATCH', `/messages/${id}`, { key, body: { text: 'Class moved to 11', sendAt: tomorrowAt('11:00') } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.message.text, 'Class moved to 11');
+  assert.equal(r.body.message.time, '11:00');
+  assert.equal(r.body.message.groups.length, 1, 'fields not sent are kept');
+  assert.equal(jobCount(), 1, 'edited in place, not a second message');
+  const bad = await call('PATCH', `/messages/${id}`, { key, body: { text: ' ' } });
+  assert.equal(bad.status, 400);
+});
+
+test('PATCH and move are refused once a message has started sending', async () => {
+  const key = newKey();
+  const id = (await call('POST', '/messages', { key, body: { text: 'x', groups: ['1@g.us', '2@g.us'], sendAt: tomorrowAt('10:00') } })).body.message.id;
+  const j = db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
+  db.prepare("INSERT INTO sends (job_id, occurrence, group_id, group_name, status) VALUES (?,?,?,?, 'sent')").run(id, j.run_at, '1@g.us', 'G1');
+  const r = await call('PATCH', `/messages/${id}`, { key, body: { text: 'changed' } });
+  assert.equal(r.status, 409);
+  assert.match(r.body.error.message, /started sending/);
+  assert.equal(db.prepare('SELECT message FROM jobs WHERE id=?').get(id).message, 'x', 'nothing changed');
+});
+
+test('DELETE ?scope=this skips one week of a weekly message; refused for a one-off', async () => {
+  const key = newKey();
+  const wk = (await call('POST', '/messages', { key, body: { text: 'w', groups: ['1@g.us'], sendAt: tomorrowAt('10:00'), repeat: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] } }));
+  assert.equal(wk.status, 201, JSON.stringify(wk.body));
+  const before = db.prepare('SELECT run_at FROM jobs WHERE id=?').get(wk.body.message.id).run_at;
+  const r = await call('DELETE', `/messages/${wk.body.message.id}?scope=this`, { key });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.result.skippedThisTime, true);
+  const after = db.prepare('SELECT status, run_at FROM jobs WHERE id=?').get(wk.body.message.id);
+  assert.equal(after.status, 'scheduled');
+  assert.ok(after.run_at > before, 'moved on to the next day');
+  const one = (await call('POST', '/messages', { key, body: { text: 'o', groups: ['1@g.us'], sendAt: tomorrowAt('12:00') } })).body.message.id;
+  assert.equal((await call('DELETE', `/messages/${one}?scope=this`, { key })).status, 400);
+});
+
 test('list and read messages with per-group status', async () => {
   const key = newKey();
   const id = (await call('POST', '/messages', { key, body: { text: 'x', groups: ['1@g.us', '2@g.us'], sendAt: tomorrowAt('10:00'), title: 'Reminder' } })).body.message.id;

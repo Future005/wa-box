@@ -31,7 +31,7 @@ const server = http.createServer((req, res) => {
     if (u.pathname === '/hook') { gw.hooks.push(JSON.parse(body)); return j(200, {}); }   // alert webhook (no engine key)
     if (req.headers['x-api-key'] !== KEY) return j(401, { message: 'bad key' });
     if (u.pathname === '/status') return j(200, { status: gw.status, phone: '919000000000', pushName: 'Test' });
-    if (u.pathname === '/typing') return j(200, { ok: true });
+    if (u.pathname === '/typing') { const b = JSON.parse(body); if (b.state === 'typing' && gw.onTyping) gw.onTyping(b.chatId); return j(200, { ok: true }); }
     if (u.pathname === '/receipts') { const ids = JSON.parse(body).ids; return j(200, Object.fromEntries(ids.map(id => [id, gw.acks[id] ?? 1]))); }
     if (u.pathname === '/groups') return j(200, []);
     if (u.pathname === '/history') {
@@ -88,7 +88,7 @@ before(async () => {
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
   for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
-  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [] });
+  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null });
   setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
   Object.assign(sched.state, { lastSentAt: 0, consecutiveFailures: 0, leader: false, busy: false, stopping: false });
@@ -467,4 +467,107 @@ test('webhooks: message.started, group.failed and message.finished go out, signe
   assert.equal(fin.status, 'done_with_errors');
   assert.deepEqual(fin.groups.map(g => g.status), ['sent', 'failed']);
   assert.ok(db.prepare("SELECT COUNT(*) n FROM hook_deliveries WHERE status='ok' AND hook_id=?").get(h.id).n === 3);
+});
+
+// ---------- last-minute changes ----------
+test('cancel during the "typing…" pause just before a group: that group does not get it', async () => {
+  addGroups(1, 2, 3);
+  const id = addJob({ groups: [1, 2, 3] });
+  gw.onTyping = chat => { if (chat === G(2).id) sched.cancelJob(Number(id), 'tester'); };
+  await runUntilIdle();
+  assert.equal(sentTo(G(1).id), 1);
+  assert.equal(sentTo(G(2).id), 0, 'cancelled while typing, so not sent');
+  assert.equal(sentTo(G(3).id), 0);
+  const st = Object.fromEntries(sends(id).map(r => [r.group_id, r.status]));
+  assert.deepEqual([st[G(1).id], st[G(2).id], st[G(3).id]], ['sent', 'cancelled', 'cancelled']);
+  assert.equal(job(id).status, 'cancelled');
+  assert.match(job(id).note, /1 of 3 got it/);
+});
+
+test('cancel before it starts: nothing is sent, ever, even after the start time passes', async () => {
+  addGroups(1, 2);
+  const id = addJob({ groups: [1, 2], runAt: Date.now() + 60000, startAt: Date.now() + 60000 });
+  const r = sched.cancelJob(Number(id), 'tester');
+  assert.equal(r.cancelled, true);
+  db.prepare('UPDATE jobs SET start_at=? WHERE id=?').run(Date.now() - 1000, id);   // its time comes
+  await runUntilIdle();
+  assert.equal(gw.delivered.length, 0);
+  assert.equal(job(id).status, 'cancelled');
+});
+
+test('weekly: "skip just this time" mid-send stops the rest; next week still goes out', async () => {
+  addGroups(1, 2, 3);
+  const id = addJob({ groups: [1, 2, 3], repeat: [0, 1, 2, 3, 4, 5, 6] });
+  const first = job(id).run_at;
+  gw.onTyping = chat => { if (chat === G(2).id) sched.cancelJob(Number(id), 'tester', 'this'); };
+  await runUntilIdle();
+  assert.equal(gw.delivered.length, 1);
+  const j = job(id);
+  assert.equal(j.status, 'scheduled', 'the repeat carries on');
+  assert.ok(j.run_at > first + 6 * 3600 * 1000);
+  assert.match(j.note, /Stopped .*repeat carries on/);
+});
+
+test('weekly: "stop the repeat" ends it for good', async () => {
+  addGroups(1);
+  const id = addJob({ groups: [1], repeat: [6], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3 });
+  sched.cancelJob(Number(id), 'tester', 'all');
+  assert.equal(job(id).status, 'cancelled');
+});
+
+test('move: a one-off goes at the new time; nothing goes at the old time', async () => {
+  addGroups(1);
+  const soon = Date.now() + 5000;
+  const id = addJob({ groups: [1], runAt: soon, startAt: soon });
+  const later = time.epochToIst(Date.now() + 2 * 3600e3);
+  sched.rescheduleJob(Number(id), 'tester', { date: later.date, time: later.time });
+  db.prepare('UPDATE jobs SET start_at=start_at WHERE id=?').run(id);
+  await runUntilIdle();
+  assert.equal(gw.delivered.length, 0, 'not at the old time');
+  assert.equal(time.epochToIst(job(id).run_at).time, later.time);
+  assert.ok(job(id).start_at >= job(id).run_at);
+});
+
+test('move a weekly message "just this time": it goes back to its usual time afterwards', async () => {
+  addGroups(1);
+  const usual = time.epochToIst(Date.now() - 10 * 60000);
+  const id = addJob({ groups: [1], repeat: [0, 1, 2, 3, 4, 5, 6], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3, timeIst: usual.time });
+  const moved = time.epochToIst(Date.now() + 2 * 3600e3);
+  sched.rescheduleJob(Number(id), 'tester', { date: moved.date, time: moved.time, scope: 'this' });
+  assert.equal(job(id).time_ist, usual.time, 'weekly time unchanged');
+  db.prepare('UPDATE jobs SET run_at=?, start_at=? WHERE id=?').run(Date.now() - 1000, Date.now() - 1000, id);   // pretend the moved time has come
+  await runUntilIdle();
+  assert.equal(gw.delivered.length, 1);
+  assert.equal(time.epochToIst(job(id).run_at).time, usual.time, 'next one is back at the usual time');
+});
+
+test('move "every week from now on" changes the weekly time', () => {
+  addGroups(1);
+  const id = addJob({ groups: [1], repeat: [6], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3, timeIst: '09:00' });
+  const moved = time.epochToIst(Date.now() + 2 * 3600e3);
+  sched.rescheduleJob(Number(id), 'tester', { date: moved.date, time: moved.time, scope: 'series' });
+  assert.equal(job(id).time_ist, moved.time);
+});
+
+test('a message that has started cannot be moved (it says so), and "change the rest" hands back the groups still waiting', async () => {
+  addGroups(1, 2, 3);
+  const id = addJob({ groups: [1, 2, 3] });
+  gw.onTyping = chat => {
+    if (chat !== G(2).id) return;
+    const t = time.epochToIst(Date.now() + 3600e3);
+    assert.throws(() => sched.rescheduleJob(Number(id), 'tester', { date: t.date, time: t.time }), /started sending|Only messages that are waiting/);
+    const r = sched.splitRest(Number(id), 'tester');
+    assert.deepEqual(r.groups.map(g => g.id), [G(3).id], 'group 2 is mid-send, so only group 3 is handed back');
+  };
+  await runUntilIdle();
+  assert.equal(sentTo(G(1).id), 1);
+  assert.equal(sentTo(G(3).id), 0);
+  assert.equal(job(id).status, 'cancelled');
+});
+
+test('cancelling something that already finished is refused clearly', async () => {
+  addGroups(1);
+  const id = addJob({ groups: [1] });
+  await runUntilIdle();
+  assert.throws(() => sched.cancelJob(Number(id), 'tester'), /not waiting/);
 });

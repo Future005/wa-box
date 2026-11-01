@@ -195,9 +195,38 @@ router.delete('/messages/:id', need('schedule'), wrap(async (req, res) => {
     throw err(403, 'forbidden', 'This key can only cancel messages it scheduled. Use a "full" key to cancel others.');
   }
   if (!['scheduled', 'running'].includes(j.status)) throw err(409, 'not_active', `This message is already ${j.status.replace(/_/g, ' ')}`);
-  db.prepare("UPDATE jobs SET status='cancelled', note=?, updated_by=?, updated_at=? WHERE id=?")
-    .run(`Cancelled through the API (${req.key.name})`, `api:${req.key.name}`, Date.now(), j.id);
-  require('./db').audit(`api:${req.key.name}`, 'job_cancelled', `#${j.id}`);
+  // ?scope=this skips just this time of a weekly message; default cancels it (and its repeat).
+  const scope = req.query.scope === 'this' ? 'this' : 'all';
+  if (scope === 'this' && !JSON.parse(j.repeat_days).length) throw err(400, 'invalid_request', 'scope=this is only for weekly messages');
+  const r = sched.cancelJob(j.id, `api:${req.key.name}`, scope);
+  require('./db').audit(`api:${req.key.name}`, r.skipped ? 'job_skipped' : 'job_cancelled', `#${j.id}`);
+  res.json({ message: publicMessage(db.prepare('SELECT * FROM jobs WHERE id=?').get(j.id)), result: { skippedThisTime: !!r.skipped, groupsSent: r.sent, groupsNotSent: r.notSent } });
+}));
+
+// Change a message that hasn't started: any field from POST /messages; leave out what stays the same.
+router.patch('/messages/:id', need('schedule'), wrap(async (req, res) => {
+  const j = getMessage(req);
+  if (req.key.scope !== 'full' && j.created_by !== `api:${req.key.name}`) {
+    throw err(403, 'forbidden', 'This key can only change messages it scheduled. Use a "full" key to change others.');
+  }
+  if (j.status !== 'scheduled') throw err(409, 'not_active', j.status === 'running' ? 'It has started sending, so it can no longer be changed. DELETE it to stop the rest.' : `This message is already ${j.status.replace(/_/g, ' ')}`);
+  const b = req.body || {};
+  const merged = {
+    text: b.text ?? b.message ?? j.message, title: b.title ?? j.title,
+    groups: b.groups ?? (b.list || b.lists ? undefined : JSON.parse(j.groups_json).map(g => g.id)), list: b.list, lists: b.lists,
+    sendAt: b.sendAt ?? epochToIst(j.run_at), repeat: b.repeat ?? JSON.parse(j.repeat_days).map(d => DAY_NAMES[d]),
+    pacing: b.pacing ?? { minSeconds: j.gap_min, maxSeconds: j.gap_max },
+    imageUrl: b.imageUrl !== undefined ? b.imageUrl : j.media_url, linkPreview: b.linkPreview ?? j.link_preview !== 0,
+  };
+  const v = await validateJobInput(toFormBody(merged, req.key));
+  const now = Date.now();
+  const r = db.prepare(`UPDATE jobs SET title=?, message=?, media_url=?, link_preview=?, groups_json=?, time_ist=?, run_at=?, start_at=?, gap_min=?, gap_max=?, repeat_days=?,
+    note='', updated_by=?, updated_at=? WHERE id=? AND status='scheduled'
+    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ('pending','retry'))`)
+    .run(v.title, v.message, v.imageUrl ?? j.media_url, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), now + UNDO_MS),
+      v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), `api:${req.key.name}`, now, j.id);
+  if (!r.changes) throw err(409, 'not_active', 'It started sending a moment ago, so it was not changed.');
+  require('./db').audit(`api:${req.key.name}`, 'job_edited', `#${j.id}`);
   res.json({ message: publicMessage(db.prepare('SELECT * FROM jobs WHERE id=?').get(j.id)) });
 }));
 

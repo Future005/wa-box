@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0 (1 Nov 2026)
+
+### Last-minute changes
+- **Move** and **Cancel** on every upcoming message, right on the row, plus **Stop** on messages that are sending.
+- **Move**: +15 min, +1 hour, tomorrow, or any date and time. Weekly messages: "just this time" (back to the usual time after) or "every week from now on". Nothing goes at the old time.
+- Weekly messages: **Skip just this time** or **Stop the weekly repeat**, before or during sending. Stopping one week no longer ends the repeat.
+- **Change the rest**: stop a message mid-send and open a copy with only the groups that didn't get it yet.
+- Safer at the last second: WA Box re-checks right before each group (after the "typing…" pause), so a cancel, stop or move always wins. Groups that didn't get it show **Not sent (cancelled)**.
+- Editing a message that starts sending at that moment is refused clearly instead of half-saving.
+
+### API
+- `PATCH /messages/{id}` changes a message that hasn't started (text, groups, time, anything from `POST`).
+- `DELETE /messages/{id}?scope=this` skips one time of a weekly message. `DELETE` now returns how many groups got it and how many didn't.
+
 ## 1.0.0 (28 Oct 2026)
 
 The first complete version.

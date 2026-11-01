@@ -260,7 +260,9 @@ api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
 api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   const job = db.prepare('SELECT * FROM jobs WHERE id=?').get(Number(req.params.id));
   if (!job) throw bad('Job not found');
-  if (job.status !== 'scheduled') throw bad('Only scheduled (not yet started) jobs can be edited');
+  if (job.status !== 'scheduled') throw Object.assign(new Error(job.status === 'running'
+    ? 'It started sending, so your changes were not saved. Stop it, or use "Change the rest" to send something else to the groups still waiting.'
+    : 'This message is no longer waiting, so it cannot be edited. Duplicate it instead.'), { status: 409 });
   const v = await validateJobInput(req.body);
   if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
   let mediaFile = job.media_file, mediaMime = job.media_mime, mediaUrl = job.media_url;
@@ -268,10 +270,13 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   const media = saveMedia(req.file);
   if (media) { mediaFile = media.name; mediaMime = media.mime; mediaUrl = null; }
   if (v.imageUrl) { mediaUrl = v.imageUrl; mediaFile = null; mediaMime = null; }
-  db.prepare(`UPDATE jobs SET title=?,message=?,media_file=?,media_mime=?,media_url=?,link_preview=?,groups_json=?,time_ist=?,run_at=?,start_at=?,gap_min=?,gap_max=?,
-    repeat_days=?,note='',updated_by=?,updated_at=? WHERE id=? AND status='scheduled'`)
-    .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, v.runAt + sched.jitter(),
+  // Only while nothing has gone out yet; if it started a moment ago, say so instead of pretending it saved.
+  const r = db.prepare(`UPDATE jobs SET title=?,message=?,media_file=?,media_mime=?,media_url=?,link_preview=?,groups_json=?,time_ist=?,run_at=?,start_at=?,gap_min=?,gap_max=?,
+    repeat_days=?,note='',updated_by=?,updated_at=? WHERE id=? AND status='scheduled'
+    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ('pending','retry'))`)
+    .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), Date.now() + UNDO_MS),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
+  if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Stop it, or use "Change the rest".'), { status: 409 });
   audit(req.user.username, 'job_edited', `#${job.id}`);
   res.json({ ok: true });
 }));
@@ -282,12 +287,26 @@ api.post('/jobs/:id/undo', wrap(async (req, res) => {
   res.json({ ok: true, ...r });
 }));
 
+// Cancel, or for a weekly message just this time (scope "this"). Safe at any moment, even mid-send.
 api.post('/jobs/:id/cancel', wrap(async (req, res) => {
-  const r = db.prepare("UPDATE jobs SET status='cancelled', note=?, updated_by=?, updated_at=? WHERE id=? AND status IN ('scheduled','running')")
-    .run(`Cancelled by ${req.user.username}`, req.user.username, Date.now(), Number(req.params.id));
-  if (!r.changes) throw bad('Job is not active');
-  audit(req.user.username, 'job_cancelled', `#${req.params.id}`);
-  res.json({ ok: true });
+  const scope = req.body?.scope === 'this' ? 'this' : 'all';
+  const r = sched.cancelJob(Number(req.params.id), req.user.username, scope);
+  audit(req.user.username, r.skipped ? 'job_skipped' : 'job_cancelled', `#${req.params.id} (${r.sent} sent, ${r.notSent} not sent)`);
+  res.json({ ok: true, ...r });
+}));
+
+// Move a waiting message. Weekly: scope "this" (just this time) or "series" (every week from now on).
+api.post('/jobs/:id/reschedule', wrap(async (req, res) => {
+  const r = sched.rescheduleJob(Number(req.params.id), req.user.username, { date: req.body?.date, time: req.body?.time, scope: req.body?.scope === 'series' ? 'series' : 'this' });
+  audit(req.user.username, 'job_moved', `#${req.params.id} to ${formatIst(r.runAt)}`);
+  res.json({ ok: true, ...r });
+}));
+
+// Stop a message that is sending and get the groups still waiting, to send them something else.
+api.post('/jobs/:id/change-rest', wrap(async (req, res) => {
+  const r = sched.splitRest(Number(req.params.id), req.user.username);
+  audit(req.user.username, 'job_split', `#${req.params.id} (${r.groups.length} groups to rewrite)`);
+  res.json({ ok: true, ...r });
 }));
 
 // "Send now" starts after a 30-second undo window (UNDO_MS, from jobs.js).

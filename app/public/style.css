@@ -435,7 +435,7 @@ dialog::backdrop { background: rgba(20,20,22,.32); }
   .row-2 { grid-template-columns: 1fr; }
   .segmented { grid-template-columns: 1fr; }
   .job-row { grid-template-columns: 52px minmax(0,1fr); }
-  .job-row .pill { grid-column: 2; justify-self: start; }
+  .job-row .pill, .job-row .row-end { grid-column: 2; justify-self: start; }
   #job-submit { flex: 1; min-width: 0; }
   .picker-bar { flex-wrap: wrap; }
   .picker-bar input { flex-basis: 100%; }
@@ -565,3 +565,12 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .credit a { color: var(--ink-2); font-weight: 650; text-decoration: none; }
 .credit a:hover { color: var(--teal); text-decoration: underline; }
 .rail-credit { text-align: left; padding: 0 10px; }
+
+/* quick controls on upcoming rows */
+.row-end { display: inline-flex; align-items: center; gap: 10px; }
+.row-acts { display: inline-flex; gap: 6px; }
+.row-acts .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+@media (hover: hover) and (min-width: 521px) { .row-acts { opacity: 0; transition: opacity .12s; } .job-row:hover .row-acts, .job-row:focus-within .row-acts { opacity: 1; } }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+#dialog-content .row-2 { margin-bottom: 12px; }
+.pill.cancelled { white-space: nowrap; }

@@ -21,9 +21,9 @@
 
 <p align="center">
   <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.0.0"></a>
+  <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.1.0"></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="MIT license"></a>
-  <img src="docs/badges/tests.svg" alt="74 tests passing">
+  <img src="docs/badges/tests.svg" alt="86 tests passing">
   <img src="docs/badges/node.svg" alt="Node 22 LTS">
   <img src="docs/badges/express.svg" alt="Express 5">
   <img src="docs/badges/sqlite.svg" alt="SQLite">
@@ -62,7 +62,7 @@ WA Box is a small web app your whole team can use:
 
 | | |
 |---|---|
-| <img src="docs/screenshots/compose.png" alt="Writing a message with a live WhatsApp preview"><br>**Write.** Live WhatsApp preview per group, `{group}` `{day}` `{date}` placeholders, saved lists, templates, and a date sense-check ("says Saturday but sends on Friday"). | <img src="docs/screenshots/scheduled.png" alt="Scheduled messages by day"><br>**Plan.** Everything coming up, by day. Weekly repeats, edit, duplicate, send now, undo. |
+| <img src="docs/screenshots/compose.png" alt="Writing a message with a live WhatsApp preview"><br>**Write.** Live WhatsApp preview per group, `{group}` `{day}` `{date}` placeholders, saved lists, templates, and a date sense-check ("says Saturday but sends on Friday"). | <img src="docs/screenshots/scheduled.png" alt="Scheduled messages by day"><br>**Plan.** Everything coming up, by day. Weekly repeats, edit, move, cancel, skip a week, send now, undo. |
 | <img src="docs/screenshots/sent.png" alt="Sent messages with delivery ticks"><br>**Know.** Every group, every send, with WhatsApp's ✓ ✓✓ ticks and plain-English reasons for anything that didn't go. | <img src="docs/screenshots/system.png" alt="System health and event log"><br>**Trust.** Health, decisions waiting for you, open issues and a full event log. |
 | <img src="docs/screenshots/api.png" alt="API keys and webhooks"><br>**Connect.** Scoped API keys, signed webhooks, ready-to-paste examples. | <img src="docs/screenshots/mobile.png" alt="WA Box on a phone" width="260"><br>**Anywhere.** Works on a phone, so a Saturday-morning check takes ten seconds. |
 
@@ -92,6 +92,7 @@ WA Box is a small web app your whole team can use:
 - Lists remember when you usually send them ("usually Saturday 09:30, gentle pacing").
 - Quiet-hours warning, so nothing lands at 2 AM by accident.
 - 30-second undo on everything you schedule, including from the API.
+- Plans changed? **Move** or **Cancel** any upcoming message in one tap, skip just this week of a weekly one, or stop it mid-send and **change the rest**. A cancel always wins, even a second before a group gets it.
 - "Send these again?": last week's messages offered back to you on Today.
 
 **Sending safely**
@@ -266,7 +267,7 @@ The [user guide](docs/USER-GUIDE.md) covers everything, with pictures. In short:
 - **`app/`, the WA Box app**: Node.js 22, Express, SQLite. Serves the web app and the public API, runs the scheduler, keeps every record. The only public service.
 - **`engine/`, the WhatsApp engine**: a small private service around [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js) running real WhatsApp Web in headless Chrome. Keeps the login, reconnects, restarts Chrome when it misbehaves or grows too big, and falls back to the last WhatsApp Web version that worked. No domain, no published port, API key on every call.
 - **The contract between them**: a `4xx` from the engine means *definitely not sent*. Anything else (timeouts, 5xx, dropped connections) means *maybe sent*, and the app checks the group's chat before doing anything. Both sides have tests for this.
-- **Evals in the build**: the Docker build runs the full test suite (74 tests acting out real failures: lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
+- **Evals in the build**: the Docker build runs the full test suite (86 tests acting out real failures: last-minute cancels, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
 
 ### WA Box or a WhatsApp gateway?
 
