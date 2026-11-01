@@ -275,7 +275,7 @@ async function sendToGroup(job, group, cfg, msgHash) {
     // during the gap or the "typing…" pause. Nothing has reached WhatsApp yet, so this is safe to stop.
     if (state.stopping || !jobStillActive(job.id, job.run_at)) {
       try { await wa.typing(group.id, 'paused'); } catch { /* non-fatal */ }
-      upsertSend(job, group, { status: 'cancelled', error: 'Cancelled just before sending. This group did not get it.' });
+      upsertSend(job, group, { status: 'cancelled', error: 'Aborted just before sending. This group did not get it.' });
       logEvent('info', 'send', 'Not sent: the message was cancelled or moved a moment before sending', { jobId: job.id, group: group.name });
       refreshStopNote(job);
       return 'cancelled';
@@ -474,10 +474,13 @@ const sentCount = job => db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=?
 // The sender then backs off, so recount once it has, so the note says exactly who got it.
 function refreshStopNote(job) {
   const j = getJob(job.id);
-  if (!j || j.status !== 'cancelled' || !/^Stopped by /.test(j.note || '')) return;
+  if (!j || !j.note) return;
+  const oneOff = j.status === 'cancelled' && /^Aborted by /.test(j.note);
+  const thisTime = j.note.startsWith(`Aborted ${formatIst(job.run_at)} only`);
+  if (!oneOff && !thisTime) return;
   const got = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run','uncertain')").get(job.id, job.run_at).n;
   db.prepare('UPDATE jobs SET note=? WHERE id=?')
-    .run(j.note.replace(/: \d+ of (\d+) got it/, `: ${got} of $1 got it`), job.id);
+    .run(j.note.replace(/(\d+) of (\d+) (had )?got it/, (m, _n, total, had) => `${got} of ${total} ${had || ''}got it`), job.id);
 }
 
 /**
@@ -489,25 +492,25 @@ function refreshStopNote(job) {
  */
 function cancelJob(jobId, by, scope = 'all') {
   const job = getJob(jobId);
-  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more'), { status: 409 });
+  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
   const days = JSON.parse(job.repeat_days || '[]');
   const sent = sentCount(job);
   const waiting = unsentGroups(job);
   const started = job.status === 'running' || sent > 0;
   const now = Date.now();
   if (started) {
-    for (const g of waiting) upsertSend(job, g, { status: 'cancelled', error: `Cancelled by ${by} before it was sent` });
+    for (const g of waiting) upsertSend(job, g, { status: 'cancelled', error: `Aborted by ${by} before it was sent` });
   }
   if (scope === 'this' && days.length) {
     const next = nextWeeklyOccurrence(Math.max(job.run_at, now) + 60 * 1000, job.time_ist, days);
     db.prepare("UPDATE jobs SET run_at=?, start_at=?, status='scheduled', note=?, updated_by=?, updated_at=? WHERE id=?")
-      .run(next, next + jitter(), `${started ? 'Stopped' : 'Skipped'} ${formatIst(job.run_at)} (by ${by}); the repeat carries on`, by, now, job.id);
-    logEvent('info', 'cancel', `${by} ${started ? 'stopped' : 'skipped'} this time (${sent} sent, ${waiting.length} not sent); next ${formatIst(next)}`, { jobId });
+      .run(next, next + jitter(), `Aborted ${formatIst(job.run_at)} only (by ${by}${started ? `, ${sent} of ${JSON.parse(job.groups_json).length} had got it` : ''}); the weekly repeat carries on`, by, now, job.id);
+    logEvent('info', 'cancel', `${by} aborted this time (${sent} sent, ${waiting.length} not sent); next ${formatIst(next)}`, { jobId });
     return { skipped: true, next, sent, notSent: waiting.length };
   }
   db.prepare("UPDATE jobs SET status='cancelled', note=?, updated_by=?, updated_at=? WHERE id=?")
-    .run(started ? `Stopped by ${by}: ${sent} of ${JSON.parse(job.groups_json).length} got it, the rest did not` : `Cancelled by ${by}`, by, now, job.id);
-  logEvent('info', 'cancel', `${by} cancelled it (${sent} sent, ${waiting.length} not sent)`, { jobId });
+    .run(started ? `Aborted by ${by}: ${sent} of ${JSON.parse(job.groups_json).length} got it, the rest did not` : `Aborted by ${by}. Nothing was sent.`, by, now, job.id);
+  logEvent('info', 'cancel', `${by} aborted it (${sent} sent, ${waiting.length} not sent)`, { jobId });
   return { cancelled: true, sent, notSent: waiting.length };
 }
 
@@ -517,9 +520,9 @@ function cancelJob(jobId, by, scope = 'all') {
  */
 function rescheduleJob(jobId, by, { date, time, scope = 'this' }) {
   const job = getJob(jobId);
-  if (!job || job.status !== 'scheduled') throw Object.assign(new Error('Only messages that are waiting can be moved'), { status: 409 });
+  if (!job || job.status !== 'scheduled') throw Object.assign(new Error('Only messages that are waiting can be rescheduled'), { status: 409 });
   if (sentCount(job) || db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ('pending','retry')").get(job.id, job.run_at).n) {
-    throw Object.assign(new Error('It has already started sending. Stop it, or use "Change the rest".'), { status: 409 });
+    throw Object.assign(new Error('It has already started sending, so it can\'t be rescheduled. Abort it, or use "Change the rest".'), { status: 409 });
   }
   let runAt;
   try { runAt = istToEpoch(String(date || ''), String(time || '')); } catch { throw Object.assign(new Error('Pick a valid date and time (India time)'), { status: 400 }); }
@@ -529,15 +532,15 @@ function rescheduleJob(jobId, by, { date, time, scope = 'this' }) {
   const newTime = scope === 'series' || !days.length ? time : job.time_ist;
   db.prepare('UPDATE jobs SET run_at=?, start_at=?, time_ist=?, note=?, updated_by=?, updated_at=? WHERE id=? AND status=?')
     .run(runAt, Math.max(runAt + jitter(), Date.now() + UNDO_GRACE_MS), newTime,
-      days.length && scope !== 'series' ? `Moved this time to ${formatIst(runAt)}; usually ${job.time_ist}` : '', by, Date.now(), job.id, 'scheduled');
-  logEvent('info', 'move', `${by} moved it to ${formatIst(runAt)}${days.length ? (scope === 'series' ? ' (every week from now on)' : ' (this time only)') : ''}`, { jobId });
+      days.length && scope !== 'series' ? `Rescheduled this time to ${formatIst(runAt)}; usually ${job.time_ist}` : '', by, Date.now(), job.id, 'scheduled');
+  logEvent('info', 'reschedule', `${by} rescheduled it to ${formatIst(runAt)}${days.length ? (scope === 'series' ? ' (every week from now on)' : ' (this time only)') : ''}`, { jobId });
   return { runAt };
 }
 
 /** Stop a message that is sending and hand back the groups that haven't got it, to send something else to them. */
 function splitRest(jobId, by) {
   const job = getJob(jobId);
-  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more'), { status: 409 });
+  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
   const rest = unsentGroups(job);
   const r = cancelJob(jobId, by, JSON.parse(job.repeat_days || '[]').length ? 'this' : 'all');
   return { ...r, groups: rest };

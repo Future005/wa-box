@@ -117,13 +117,13 @@ in the app if needed). The *Last used* column shows when each key was last seen.
 | `GET` | `/messages/{id}` | read | One message with each group's status and ticks |
 | `POST` | `/messages` | schedule | Schedule a message |
 | `PATCH` | `/messages/{id}` | schedule / full | Change the text, groups or time of a message that hasn't started |
-| `DELETE` | `/messages/{id}` | schedule / full | Cancel or stop a message. `?scope=this` skips one time of a weekly message |
+| `DELETE` | `/messages/{id}` | schedule / full | Abort a message, even mid-send. `?scope=this` aborts one time of a weekly message |
 
 ### Last-minute changes
 
-- **Change it:** `PATCH /messages/{id}` with only the fields to change (same names as `POST /messages`). A new `sendAt` moves it; nothing goes at the old time. Refused with `409` once the first group has started.
-- **Cancel or stop it:** `DELETE /messages/{id}`. Works while it's sending too: groups that already got it keep it, the rest don't get it. The reply's `result` says how many: `{ skippedThisTime, groupsSent, groupsNotSent }`.
-- **Skip just this week:** `DELETE /messages/{id}?scope=this` on a weekly message. The repeat carries on (`400` on a one-off message).
+- **Change or reschedule it:** `PATCH /messages/{id}` with only the fields to change (same names as `POST /messages`). A new `sendAt` reschedules it; nothing goes at the old time. Refused with `409` once the first group has started.
+- **Abort it:** `DELETE /messages/{id}`. Works while it's sending too: groups that already got it keep it, the rest don't get it. The reply's `result` says how many: `{ skippedThisTime, groupsSent, groupsNotSent }`.
+- **Abort just this week:** `DELETE /messages/{id}?scope=this` on a weekly message. The repeat carries on (`400` on a one-off message).
 
 ### The message object
 
@@ -361,10 +361,10 @@ curl -H "Authorization: Bearer $KEY" "$BASE/messages?status=upcoming"
 curl -X PATCH -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"text":"Class moved to *11:30*","sendAt":"2026-11-07T11:30:00+05:30"}' $BASE/messages/42
 
-# Skip just this week of a weekly message
+# Abort just this week of a weekly message
 curl -X DELETE -H "Authorization: Bearer $KEY" "$BASE/messages/42?scope=this"
 
-# Cancel (or stop it mid-send)
+# Abort (even mid-send)
 curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/messages/42
 ```
 

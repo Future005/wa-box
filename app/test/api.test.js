@@ -169,7 +169,7 @@ test('PATCH: change the text and the time of a waiting message; the old time is 
   assert.equal(bad.status, 400);
 });
 
-test('PATCH and move are refused once a message has started sending', async () => {
+test('PATCH and reschedule are refused once a message has started sending', async () => {
   const key = newKey();
   const id = (await call('POST', '/messages', { key, body: { text: 'x', groups: ['1@g.us', '2@g.us'], sendAt: tomorrowAt('10:00') } })).body.message.id;
   const j = db.prepare('SELECT * FROM jobs WHERE id=?').get(id);

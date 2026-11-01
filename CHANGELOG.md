@@ -3,12 +3,13 @@
 ## 1.1.0 (1 Nov 2026)
 
 ### Last-minute changes
-- **Move** and **Cancel** on every upcoming message, right on the row, plus **Stop** on messages that are sending.
-- **Move**: +15 min, +1 hour, tomorrow, or any date and time. Weekly messages: "just this time" (back to the usual time after) or "every week from now on". Nothing goes at the old time.
-- Weekly messages: **Skip just this time** or **Stop the weekly repeat**, before or during sending. Stopping one week no longer ends the repeat.
-- **Change the rest**: stop a message mid-send and open a copy with only the groups that didn't get it yet.
-- Safer at the last second: WA Box re-checks right before each group (after the "typing…" pause), so a cancel, stop or move always wins. Groups that didn't get it show **Not sent (cancelled)**.
+- **Reschedule** and **Abort** on every upcoming message, always visible on its row (no hover needed, works the same on a phone). Messages that are sending show **Abort**.
+- **Reschedule**: +15 min, +1 hour, tomorrow, or any date and time. Weekly messages: "just this time" (back to the usual time after) or "every week from now on". Nothing goes at the old time.
+- Weekly messages: **Abort just this time** or **Abort the weekly repeat**, before or during sending. Aborting one week no longer ends the repeat.
+- **Change the rest**: abort a message mid-send and open a copy with only the groups that didn't get it yet.
+- Safer at the last second: WA Box re-checks right before each group (after the "typing…" pause), so an abort or reschedule always wins. Groups that didn't get it show **Not sent (aborted)**.
 - Editing a message that starts sending at that moment is refused clearly instead of half-saving.
+- Wording: "Cancelled" is now "Aborted" everywhere in the app.
 
 ### Fixed
 - After a redeploy, WhatsApp could fail to start with "The profile appears to be in use by another Chromium process … on another computer". The engine now removes the stale lock the old container left behind and starts normally, keeping the login.

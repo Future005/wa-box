@@ -261,7 +261,7 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   const job = db.prepare('SELECT * FROM jobs WHERE id=?').get(Number(req.params.id));
   if (!job) throw bad('Job not found');
   if (job.status !== 'scheduled') throw Object.assign(new Error(job.status === 'running'
-    ? 'It started sending, so your changes were not saved. Stop it, or use "Change the rest" to send something else to the groups still waiting.'
+    ? 'It started sending, so your changes were not saved. Abort it, or use "Change the rest" to send something else to the groups still waiting.'
     : 'This message is no longer waiting, so it cannot be edited. Duplicate it instead.'), { status: 409 });
   const v = await validateJobInput(req.body);
   if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
@@ -276,7 +276,7 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
     AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ('pending','retry'))`)
     .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), Date.now() + UNDO_MS),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
-  if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Stop it, or use "Change the rest".'), { status: 409 });
+  if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Abort it, or use "Change the rest".'), { status: 409 });
   audit(req.user.username, 'job_edited', `#${job.id}`);
   res.json({ ok: true });
 }));

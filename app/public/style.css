@@ -567,10 +567,9 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .rail-credit { text-align: left; padding: 0 10px; }
 
 /* quick controls on upcoming rows */
-.row-end { display: inline-flex; align-items: center; gap: 10px; }
+.row-end { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 10px; }
 .row-acts { display: inline-flex; gap: 6px; }
-.row-acts .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
-@media (hover: hover) and (min-width: 521px) { .row-acts { opacity: 0; transition: opacity .12s; } .job-row:hover .row-acts, .job-row:focus-within .row-acts { opacity: 1; } }
+.row-acts .btn-sm { height: 32px; padding: 0 12px; font-size: 13px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
 #dialog-content .row-2 { margin-bottom: 12px; }
 .pill.cancelled { white-space: nowrap; }

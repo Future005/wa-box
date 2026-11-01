@@ -99,27 +99,27 @@ yourself"), so you can see it on a real phone first.
 For 30 seconds you can **Undo** (a toast appears, and the message shows a countdown). After that:
 
 - **Scheduled** lists everything coming up by day. Click a message to open it.
-- **Edit**, **Move**, **Duplicate**, **Send now** (starts in 30 seconds), or **Cancel**.
-- Just before a weekly message starts, **Skip this time** skips one week and keeps the repeat.
-- While it's sending you can **Stop sending** or **Change the rest**. Groups that already got it keep it.
+- **Edit**, **Reschedule**, **Duplicate**, **Send now** (starts in 30 seconds), or **Abort**.
+- **Abort** on a weekly message lets you abort just this time and keep the repeat.
+- While it's sending you can **Abort** or **Change the rest**. Groups that already got it keep it.
 
 Messages scheduled by an outside tool through the API show the tool's name, e.g. *Google Sheet (API)*.
 
 ## Last-minute changes
 
-Plans change. Every upcoming message has **Move** and **Cancel** right on its row (and in its panel), so you can fix it in one tap, even a minute before it goes.
+Plans change. Every upcoming message shows two buttons right on its row, always visible (on Today, on Scheduled, and on your phone): **Reschedule** and **Abort**. A message that is sending shows **Abort**. You can use them up to the last second.
 
 | What happened | What to press | What WA Box does |
 | --- | --- | --- |
-| The class or event is off | **Cancel** | Nothing is sent. Not at the old time, not ever. |
-| It's off just this week (weekly message) | **Cancel… → Skip just this time** | None of the groups get it this time. Next week it goes as usual. |
-| The weekly series is over | **Cancel… → Stop the weekly repeat** | It never goes out again. |
-| The time changed | **Move** (+15 min, +1 hour, tomorrow, or any date and time) | It goes at the new time only. For a weekly message choose **Just this time** (back to its usual time after) or **Every week from now on**. |
-| The text, image or groups changed | **Edit** | The new version goes out. If it starts sending while you're editing, WA Box tells you and nothing half-saved goes out. |
-| It's already going out and something is wrong | **Stop sending** | Groups that got it keep it; the rest don't. For a weekly message choose **Stop just this time** or **end the repeat**. |
-| It's going out and the rest need a fixed version | **Change the rest** | Sending stops, and a copy opens with only the groups that didn't get it yet, so you can fix it and send it to just them. |
+| The class or event is off | **Abort** | Nothing is sent. Not at the old time, not ever. |
+| It's off just this week (weekly message) | **Abort → Abort just this time** | None of the groups get it this time. Next week it goes as usual. |
+| The weekly series is over | **Abort → Abort the weekly repeat** | It never goes out again. |
+| The time changed | **Reschedule** (+15 min, +1 hour, tomorrow, or any date and time) | It goes at the new time only. For a weekly message choose **Just this time** (back to its usual time after) or **Every week from now on**. |
+| The text, image or groups changed | **Edit** (open the message) | The new version goes out. If it starts sending while you're editing, WA Box tells you and nothing half-saved goes out. |
+| It's already going out and something is wrong | **Abort** | Groups that got it keep it; the rest don't. For a weekly message choose **Abort just this time** or **end the weekly repeat**. |
+| It's going out and the rest need a fixed version | **Change the rest** (open the message) | Sending is aborted, and a copy opens with only the groups that didn't get it yet, so you can fix it and send it to just them. |
 
-**Safe at the last second.** WA Box checks again right before each group, after the "typing…" pause. If you cancel, stop or move a message while it's sending, a group that hasn't received it yet won't get it. Each group shows **Not sent (cancelled)**, so you know exactly who got it.
+**Safe at the last second.** WA Box checks again right before each group, after the "typing…" pause. If you abort or reschedule a message while it's sending, a group that hasn't received it yet won't get it. Each group shows **Not sent (aborted)**, so you know exactly who got it. Aborted messages are kept under **Scheduled → Finished & aborted**.
 
 ## Seeing what was sent
 

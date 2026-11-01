@@ -505,7 +505,7 @@ test('weekly: "skip just this time" mid-send stops the rest; next week still goe
   const j = job(id);
   assert.equal(j.status, 'scheduled', 'the repeat carries on');
   assert.ok(j.run_at > first + 6 * 3600 * 1000);
-  assert.match(j.note, /Stopped .*repeat carries on/);
+  assert.match(j.note, /Aborted .* only .*1 of 3 had got it.*repeat carries on/);
 });
 
 test('weekly: "stop the repeat" ends it for good', async () => {

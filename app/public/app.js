@@ -36,10 +36,10 @@
     img: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>',
     user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>',
   };
-  const STATUS = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done, with errors', cancelled: 'Cancelled',
+  const STATUS = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done, with errors', cancelled: 'Aborted',
     sent: 'Sent', dry_run: 'Practice', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Waiting',
     sending: 'Sending', uncertain: 'Checking', unconfirmed: 'Unconfirmed', blocked_duplicate: 'Duplicate blocked' };
-  const SEND_STATUS = { cancelled: 'Not sent (cancelled)' };
+  const SEND_STATUS = { cancelled: 'Not sent (aborted)' };
   const sendPill = s => `<span class="pill ${esc(s)}">${esc(SEND_STATUS[s] || STATUS[s] || s)}</span>`;
   const pill = s => `<span class="pill ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
 
@@ -289,7 +289,7 @@
     $(sel).addEventListener('click', e => {
       const u = e.target.closest('[data-undo]'); if (u) { e.stopPropagation(); undoJob(Number(u.dataset.undo)); return; }
       const a = e.target.closest('[data-ract]');
-      if (a) { e.stopPropagation(); const j = findJob(Number(a.dataset.id)); if (j) ({ move: moveFlow, cancel: cancelFlow, rest: changeRestFlow })[a.dataset.ract](j); return; }
+      if (a) { e.stopPropagation(); const j = findJob(Number(a.dataset.id)); if (j) ({ reschedule: rescheduleFlow, abort: abortFlow, rest: changeRestFlow })[a.dataset.ract](j); return; }
       const r = e.target.closest('[data-job]'); if (r) openDrawer(Number(r.dataset.job));
     });
     $(sel).addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.job-row')) { e.preventDefault(); openDrawer(Number(e.target.dataset.job)); } });
@@ -320,14 +320,14 @@
         <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(who(j.createdBy).split('@')[0])}</span></span>
         ${j.status === 'running' ? `<span class="live">${esc(liveLine(j))}</span><span class="progress"><i data-w="${pct}"></i></span>` : ''}
         ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
-      </span>${soon ? `<span class="soon"><span class="countdown" data-countdown="${j.startAt}"></span><button type="button" class="btn btn-ghost btn-sm" data-undo="${j.id}">${j.repeatDays.length ? 'Skip this time' : 'Undo'}</button></span>`
-        : `<span class="row-end">${pill(j.status)}${rowActions(j)}</span>`}</div>`;
+      </span><span class="row-end">${soon ? `<span class="countdown" data-countdown="${j.startAt}"></span>` : j.status === 'scheduled' ? '' : pill(j.status)}${rowActions(j)}</span></div>`;
   }
-  // Quick controls on every upcoming row, so a last-minute change is one tap away.
+  // Reschedule and Abort sit on every upcoming row, always visible: a last-minute change is one tap,
+  // on a phone too, and nobody has to discover a hover. Running rows get Abort (it stops the rest).
   function rowActions(j) {
-    const b = (act, label, cls = 'btn-ghost') => `<button type="button" class="btn ${cls} btn-sm" data-ract="${act}" data-id="${j.id}">${label}</button>`;
-    if (j.status === 'scheduled') return `<span class="row-acts">${b('move', 'Move')}${b('cancel', j.repeatDays.length ? 'Cancel…' : 'Cancel', 'btn-danger-ghost')}</span>`;
-    if (j.status === 'running') return `<span class="row-acts">${b('cancel', 'Stop', 'btn-danger-ghost')}</span>`;
+    const b = (act, label, cls = 'btn-ghost') => `<button type="button" class="btn ${cls} btn-sm" data-ract="${act}" data-id="${j.id}" aria-label="${label}: ${esc(jobName(j))}">${label}</button>`;
+    if (j.status === 'scheduled') return `<span class="row-acts">${b('reschedule', 'Reschedule')}${b('abort', 'Abort', 'btn-danger-ghost')}</span>`;
+    if (j.status === 'running') return `<span class="row-acts">${b('abort', 'Abort', 'btn-danger-ghost')}</span>`;
     return '';
   }
   // WhatsApp-style ticks: ✓ sent, ✓✓ delivered, blue ✓✓ read
@@ -373,9 +373,9 @@
         const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
         return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${s ? sendPill(s.status) : '<span class="pill scheduled">Waiting</span>'}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
     const acts = [];
-    if (isStartingSoon(j)) acts.push(['undo', j.repeatDays.length ? 'Skip this time' : 'Undo', 'btn-primary'], ['edit', 'Edit', 'btn-ghost'], ['move', 'Move', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
-    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['move', 'Move', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['cancel', 'Cancel', 'btn-danger-ghost']);
-    else if (j.status === 'running') acts.push(['rest', 'Change the rest', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['cancel', 'Stop sending', 'btn-danger-ghost']);
+    if (isStartingSoon(j)) acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
+    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
+    else if (j.status === 'running') acts.push(['rest', 'Change the rest', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
   }
@@ -405,13 +405,13 @@
       if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts in 30 seconds (you can still undo) and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
         await api(`jobs/${j.id}/send-now`, { method: 'POST' }); toast('Starts in 30 seconds', false, { label: 'Undo', run: () => undoJob(j.id) }); await loadJobs(); fillDrawer(findJob(j.id));
       }
-      if (b.dataset.act === 'cancel') await cancelFlow(j);
-      if (b.dataset.act === 'move') await moveFlow(j);
+      if (b.dataset.act === 'abort') await abortFlow(j);
+      if (b.dataset.act === 'reschedule') await rescheduleFlow(j);
       if (b.dataset.act === 'rest') await changeRestFlow(j);
     } catch (err) { toast(err.message, true); }
   });
 
-  // ============ Last-minute changes: cancel, move, change the rest ============
+  // ============ Last-minute changes: abort, reschedule, change the rest ============
   async function afterChange(id) {
     await loadJobs();
     if (S.view === 'today') renderToday(); if (S.view === 'scheduled') renderScheduled();
@@ -421,9 +421,9 @@
     `<label class="radio"><input type="radio" name="${name}" value="${value}"${checked ? ' checked' : ''}><span><b>${esc(title)}</b><small>${esc(help)}</small></span></label>`;
   const picked = name => $(`#dialog-content input[name="${name}"]:checked`)?.value;
 
-  async function cancelFlow(j) {
+  async function abortFlow(j) {
     await loadJobs(); j = findJob(j.id) || j;
-    if (!['scheduled', 'running'].includes(j.status)) { toast('This message already finished, so there is nothing to cancel.', true); return afterChange(j.id); }
+    if (!['scheduled', 'running'].includes(j.status)) { toast('This message already finished, so there is nothing to abort.', true); return afterChange(j.id); }
     const n = j.groups.length;
     const got = j.sends.filter(x => ['sent', 'dry_run', 'uncertain', 'sending'].includes(x.status)).length;
     const running = j.status === 'running' || got > 0;
@@ -431,33 +431,33 @@
     const when = whenLabel(j.runAt);
     let html, ok, title;
     if (running) {
-      title = 'Stop sending now?';
+      title = 'Abort while it is sending?';
       html = `<p><b>${got} of ${n}</b> groups already got it and keep it. The other <b>${n - got}</b> won't get it. A group that is mid-send is stopped before the message leaves.</p>`;
-      if (weekly) html += `<div class="radio-list">${radio('scope', 'this', 'Stop just this time', `The weekly repeat carries on: next ${repeatLabel(j.repeatDays)}, ${j.time}.`, true)}${radio('scope', 'all', 'Stop and end the weekly repeat', "It won't go out again.")}</div>`;
-      ok = 'Stop sending';
+      if (weekly) html += `<div class="radio-list">${radio('scope', 'this', 'Abort just this time', `The weekly repeat carries on: next ${repeatLabel(j.repeatDays)}, ${j.time}.`, true)}${radio('scope', 'all', 'Abort and end the weekly repeat', "It won't go out again.")}</div>`;
+      ok = 'Abort sending';
     } else if (weekly) {
-      title = 'Cancel which one?';
-      html = `<div class="radio-list">${radio('scope', 'this', `Skip just ${when}`, `None of the ${n} groups get it this time. It goes out as usual after that.`, true)}${radio('scope', 'all', 'Stop the weekly repeat', `It won't go out on ${when} or ever again.`)}</div>`;
-      ok = 'Cancel';
+      title = 'Abort this weekly message?';
+      html = `<div class="radio-list">${radio('scope', 'this', `Abort just ${when}`, `None of the ${n} groups get it this time. It goes out as usual after that.`, true)}${radio('scope', 'all', 'Abort the weekly repeat', `It won't go out on ${when} or ever again.`)}</div><p class="hint">Only the time changed? Use <b>Reschedule</b> instead.</p>`;
+      ok = 'Abort';
     } else {
-      title = 'Cancel this message?';
-      html = `<p>It won't be sent on ${esc(when)}. None of the ${plural(n, 'group')} will get it.</p><p class="hint">Need a different time instead? Use <b>Move</b>.</p>`;
-      ok = 'Cancel message';
+      title = 'Abort this message?';
+      html = `<p>It won't be sent on ${esc(when)}. None of the ${plural(n, 'group')} will get it.</p><p class="hint">Only the time changed? Use <b>Reschedule</b> instead.</p>`;
+      ok = 'Abort message';
     }
-    if (!await dialog({ title, html, ok, cancel: 'Keep it', danger: true })) return;
+    if (!await dialog({ title, html, ok, cancel: "Don't abort", danger: true })) return;
     const scope = picked('scope') || 'all';
     try {
       const r = await api(`jobs/${j.id}/cancel`, { method: 'POST', body: { scope } });
-      toast(r.skipped ? `${r.sent ? `Stopped. ${r.sent} of ${n} got it.` : 'Skipped this time.'} Next: ${whenLabel(r.next)}`
-        : r.sent ? `Stopped. ${r.sent} of ${n} got it; the other ${r.notSent} won't.` : "Cancelled. It won't be sent.");
+      toast(r.skipped ? `${r.sent ? `Aborted. ${r.sent} of ${n} got it.` : 'Aborted this time.'} Next: ${whenLabel(r.next)}`
+        : r.sent ? `Aborted. ${r.sent} of ${n} got it; the other ${r.notSent} won't.` : "Aborted. It won't be sent.");
     } catch (err) { toast(err.message, true); }
     await afterChange(j.id);
   }
 
-  async function moveFlow(j) {
+  async function rescheduleFlow(j) {
     await loadJobs(); j = findJob(j.id) || j;
     if (j.status !== 'scheduled' || j.sends.some(x => !['pending', 'retry'].includes(x.status))) {
-      toast('It has already started sending, so it can\'t be moved. Stop it, or use "Change the rest".', true); return afterChange(j.id);
+      toast('It has already started sending, so it can\'t be rescheduled. Abort it, or use "Change the rest".', true); return afterChange(j.id);
     }
     const weekly = j.repeatDays.length > 0;
     const chips = [['+15', '+15 min', 15 * 60000], ['+60', '+1 hour', 3600e3], ['day', 'Tomorrow, same time', DAY]];
@@ -468,7 +468,7 @@
       <label class="fld"><span>Time (India)</span><input type="time" id="mv-time" value="${at.time}"></label></div>
       ${weekly ? `<div class="radio-list">${radio('mscope', 'this', 'Just this time', `Goes back to ${j.time} after this.`, true)}${radio('mscope', 'series', 'Every week from now on', 'The new time becomes its usual time.')}</div>` : ''}
       <p class="hint" id="mv-err"></p>`;
-    const ok = await dialog({ title: 'Move to a new time', html, ok: 'Move', onOpen: () => {
+    const ok = await dialog({ title: 'Reschedule', html, ok: 'Reschedule', cancel: 'Keep current time', onOpen: () => {
       $('#dialog-content').onclick = e => {
         const c = e.target.closest('[data-mv]'); if (!c) return;
         const add = chips.find(x => x[0] === c.dataset.mv)[2];
@@ -479,7 +479,7 @@
     const date = $('#mv-date').value, time = $('#mv-time').value;
     try {
       const r = await api(`jobs/${j.id}/reschedule`, { method: 'POST', body: { date, time, scope: picked('mscope') || 'this' } });
-      toast(`Moved to ${whenLabel(r.runAt)}. Nothing goes at the old time.`);
+      toast(`Rescheduled to ${whenLabel(r.runAt)}. Nothing goes at the old time.`);
     } catch (err) { toast(err.message, true); }
     await afterChange(j.id);
   }
@@ -490,8 +490,8 @@
     const got = j.sends.filter(x => ['sent', 'dry_run', 'uncertain', 'sending'].includes(x.status)).length;
     const left = j.groups.length - got;
     if (!['scheduled', 'running'].includes(j.status) || left <= 0) { toast('Every group already has it, so there is nothing left to change.', true); return afterChange(j.id); }
-    if (!await dialog({ title: 'Change the rest?', ok: 'Stop and edit the rest',
-      html: `<p>${got ? `${plural(got, 'group')} already got it and ${got === 1 ? 'keeps' : 'keep'} it. ` : ''} Sending stops now, and a copy opens with the <b>${plural(left, 'group')}</b> still waiting, so you can fix the text or the time and send it to just them.</p>${j.repeatDays.length ? '<p class="hint">The weekly repeat carries on next time as before.</p>' : ''}` })) return;
+    if (!await dialog({ title: 'Change the rest?', ok: 'Abort and edit the rest', cancel: "Don't abort",
+      html: `<p>${got ? `${plural(got, 'group')} already got it and ${got === 1 ? 'keeps' : 'keep'} it. ` : ''} Sending is aborted now, and a copy opens with the <b>${plural(left, 'group')}</b> still waiting, so you can fix the text or the time and send it to just them.</p>${j.repeatDays.length ? '<p class="hint">The weekly repeat carries on next time as before.</p>' : ''}` })) return;
     try {
       const r = await api(`jobs/${j.id}/change-rest`, { method: 'POST' });
       await loadJobs(); closeDrawer();
@@ -652,7 +652,7 @@
     $('#link-preview').checked = c.linkPreview; $('#image-url').value = c.imageLink || ''; $('#image-link-row').classList.add('hidden');
     $('#repeat-on').checked = c.repeat.length > 0;
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
-    $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : 'Cancel';
+    $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : c.mode === 'edit' ? 'Discard changes' : 'Back';
     c.pvIdx = 0;
     renderPicker(); renderDayChips(); renderPace(); renderImage(); updateCompose();
     if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
@@ -1094,7 +1094,7 @@
   // ============ API & webhooks (admin) ============
   const apiBase = () => new URL('api/v1', document.baseURI).href;
   const SCOPE_LABEL = { read: 'Read only', schedule: 'Schedule', full: 'Full' };
-  const SCOPE_HELP = { read: 'See status, groups, lists and messages', schedule: 'Read, schedule, and cancel what it scheduled', full: 'Schedule and cancel any message' };
+  const SCOPE_HELP = { read: 'See status, groups, lists and messages', schedule: 'Read, schedule, change and abort what it scheduled', full: 'Schedule, change and abort any message' };
   const EVENT_LABEL = { 'message.started': 'Message started', 'message.finished': 'Message finished', 'group.failed': 'A group failed', ping: 'Test' };
   function curlExamples(key = 'wbx_YOUR_KEY') {
     const list = S.lists[0]?.name || 'Weekend cohorts';
@@ -1202,7 +1202,7 @@
     } catch { /* ignore */ }
     try {
       const { audit } = await api('audit');
-      const words = { login: 'Signed in', login_failed: 'Failed sign-in', job_created: 'Scheduled a message', job_edited: 'Edited a message', job_cancelled: 'Cancelled a message', job_skipped: 'Skipped one time of a weekly message', job_moved: 'Moved a message', job_split: 'Stopped a message to change the rest',
+      const words = { login: 'Signed in', login_failed: 'Failed sign-in', job_created: 'Scheduled a message', job_edited: 'Edited a message', job_cancelled: 'Aborted a message', job_skipped: 'Aborted one time of a weekly message', job_moved: 'Rescheduled a message', job_split: 'Aborted a message to change the rest',
         job_send_now: 'Started a message early', job_missed: 'A message was missed', daily_cap: 'Daily limit reached', wa_start: 'Started WhatsApp', wa_logout: 'Unlinked WhatsApp',
         dry_run: 'Changed practice mode', paused: 'Paused or resumed sending', user_created: 'Added a person', user_reset: 'Reset a password', user_disabled: 'Disabled a person',
         user_enabled: 'Enabled a person', groups_synced: 'Synced groups', group_keywords: 'Changed group keywords', list_saved: 'Saved a group list', list_deleted: 'Deleted a group list',

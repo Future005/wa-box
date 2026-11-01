@@ -209,7 +209,7 @@ router.patch('/messages/:id', need('schedule'), wrap(async (req, res) => {
   if (req.key.scope !== 'full' && j.created_by !== `api:${req.key.name}`) {
     throw err(403, 'forbidden', 'This key can only change messages it scheduled. Use a "full" key to change others.');
   }
-  if (j.status !== 'scheduled') throw err(409, 'not_active', j.status === 'running' ? 'It has started sending, so it can no longer be changed. DELETE it to stop the rest.' : `This message is already ${j.status.replace(/_/g, ' ')}`);
+  if (j.status !== 'scheduled') throw err(409, 'not_active', j.status === 'running' ? 'It has started sending, so it can no longer be changed. DELETE it to abort the rest.' : `This message is already ${j.status.replace(/_/g, ' ')}`);
   const b = req.body || {};
   const merged = {
     text: b.text ?? b.message ?? j.message, title: b.title ?? j.title,
