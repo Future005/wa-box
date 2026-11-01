@@ -7,7 +7,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-test-'));
-const { Engine } = require('../src/engine');
+const { Engine, clearStaleChromeLocks } = require('../src/engine');
 const { createServer } = require('../src/server');
 const KEY = 'e'.repeat(64);
 
@@ -150,3 +150,17 @@ test('delivery receipts: from WhatsApp events when seen, else asked from WhatsAp
 });
 
 after(() => { server.closeAllConnections(); server.close(); fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }); });
+
+test('redeploy: a Chrome profile lock left by the old container is removed, a live one is kept', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lock-'));
+  const old = path.join(root, 'session-wabox', 'Default'); fs.mkdirSync(old, { recursive: true });
+  fs.symlinkSync('0b998bc875ad-2293', path.join(old, 'SingletonLock'));
+  fs.symlinkSync('123', path.join(old, 'SingletonCookie'));
+  assert.deepEqual(clearStaleChromeLocks(root), [old]);
+  assert.equal(fs.existsSync(path.join(old, 'SingletonCookie')), false);
+  assert.throws(() => fs.readlinkSync(path.join(old, 'SingletonLock')));
+  const live = path.join(root, 'live'); fs.mkdirSync(live);
+  fs.symlinkSync(`${os.hostname()}-${process.pid}`, path.join(live, 'SingletonLock'));
+  assert.deepEqual(clearStaleChromeLocks(root), [], 'a lock held by a running Chrome on this machine is left alone');
+  fs.rmSync(root, { recursive: true, force: true });
+});

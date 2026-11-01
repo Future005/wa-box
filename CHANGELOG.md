@@ -10,6 +10,9 @@
 - Safer at the last second: WA Box re-checks right before each group (after the "typing…" pause), so a cancel, stop or move always wins. Groups that didn't get it show **Not sent (cancelled)**.
 - Editing a message that starts sending at that moment is refused clearly instead of half-saving.
 
+### Fixed
+- After a redeploy, WhatsApp could fail to start with "The profile appears to be in use by another Chromium process … on another computer". The engine now removes the stale lock the old container left behind and starts normally, keeping the login.
+
 ### API
 - `PATCH /messages/{id}` changes a message that hasn't started (text, groups, time, anything from `POST`).
 - `DELETE /messages/{id}?scope=this` skips one time of a weekly message. `DELETE` now returns how many groups got it and how many didn't.

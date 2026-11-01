@@ -7,8 +7,11 @@
 //  3. Pin a known-good WhatsApp Web version: every time the session reaches "ready" we record the
 //     version. If starting fails twice in a row (often a WhatsApp Web change), we retry pinned to
 //     the last version that worked. WA_WEB_VERSION forces a specific version.
-//  4. Chrome runs headless with a minimal flag set inside a locked-down container (see compose).
+//  4. Clear a stale Chrome profile lock left by a previous container (after a redeploy the new
+//     container has a different hostname, and Chrome refuses to open the saved login).
+//  5. Chrome runs headless with a minimal flag set inside a locked-down container (see compose).
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const QRCode = require('qrcode');
 
@@ -24,6 +27,32 @@ function withTimeout(p, ms, what) {
   let t;
   const timer = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms); });
   return Promise.race([Promise.resolve(p), timer]).finally(() => clearTimeout(t));
+}
+
+// Chrome writes SingletonLock -> "<hostname>-<pid>" into the profile. If the container that wrote it
+// is gone (redeploy, crash), the lock stays on the volume and every start fails with
+// "The profile appears to be in use by another Chromium process ... on another computer".
+// Only one engine container uses this volume, and our own Chrome is closed before we start, so a
+// lock from another host, or from a process that is no longer alive here, is stale and safe to remove.
+function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+function clearStaleChromeLocks(dir, depth = 0) {
+  const cleared = [];
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return cleared; }
+  if (entries.some(e => e.name === 'SingletonLock')) {
+    let target = '';
+    try { target = fs.readlinkSync(path.join(dir, 'SingletonLock')); } catch { /* not a link */ }
+    const m = target.match(/^(.*)-(\d+)$/);
+    const stale = !m || m[1] !== os.hostname() || !pidAlive(Number(m[2]));
+    if (stale) {
+      for (const f of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+        try { fs.rmSync(path.join(dir, f), { force: true }); } catch { /* ignore */ }
+      }
+      cleared.push(dir);
+    }
+  }
+  if (depth < 4) for (const e of entries) if (e.isDirectory()) cleared.push(...clearStaleChromeLocks(path.join(dir, e.name), depth + 1));
+  return cleared;
 }
 
 class Engine {
@@ -130,6 +159,7 @@ class Engine {
       await this.teardown();
       if (this.stopping) return;
       this.setStatus('initializing', reason);
+      for (const d of clearStaleChromeLocks(path.join(DATA, 'session'))) log('warn', `removed a stale Chrome profile lock in ${d} (left by an old container)`);
       const c = this.build();
       this.client = c;
       try {
@@ -253,4 +283,4 @@ class Engine {
   }
 }
 
-module.exports = { Engine, withTimeout };
+module.exports = { Engine, withTimeout, clearStaleChromeLocks };

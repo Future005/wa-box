@@ -51,6 +51,7 @@ Without `make`: `docker compose -f docker-compose.local.yml <up -d --build | log
 | Port already in use | Set `PORT=3005` in `.env`, run setup again, use `http://localhost:3005`. |
 | Build fails in `npm test` | A safety test failed. Don't skip tests. Read the failing test name and fix the cause. |
 | Engine keeps restarting on Apple Silicon / ARM | It uses Debian's Chromium there; give Docker at least 4 GB of memory. |
+| WhatsApp shows "Start failed … profile appears to be in use by another Chromium process" | A lock left by an old container. Fixed since 1.1.0: the engine clears it on start. On an older version, delete `SingletonLock` in the engine's `/data/session` folder and restart the engine. |
 | No one-time password printed | `ADMIN_PASSWORD` was set in `.env`, or the database already had an admin. `make password` shows it if it was generated. |
 | QR never appears | `docker compose -f docker-compose.local.yml logs engine`. Usually Docker memory, or WhatsApp Web was slow; wait a minute and press Show QR code again. |
 

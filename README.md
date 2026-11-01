@@ -23,7 +23,7 @@
   <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.1.0"></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="MIT license"></a>
-  <img src="docs/badges/tests.svg" alt="86 tests passing">
+  <img src="docs/badges/tests.svg" alt="87 tests passing">
   <img src="docs/badges/node.svg" alt="Node 22 LTS">
   <img src="docs/badges/express.svg" alt="Express 5">
   <img src="docs/badges/sqlite.svg" alt="SQLite">
@@ -267,7 +267,7 @@ The [user guide](docs/USER-GUIDE.md) covers everything, with pictures. In short:
 - **`app/`, the WA Box app**: Node.js 22, Express, SQLite. Serves the web app and the public API, runs the scheduler, keeps every record. The only public service.
 - **`engine/`, the WhatsApp engine**: a small private service around [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js) running real WhatsApp Web in headless Chrome. Keeps the login, reconnects, restarts Chrome when it misbehaves or grows too big, and falls back to the last WhatsApp Web version that worked. No domain, no published port, API key on every call.
 - **The contract between them**: a `4xx` from the engine means *definitely not sent*. Anything else (timeouts, 5xx, dropped connections) means *maybe sent*, and the app checks the group's chat before doing anything. Both sides have tests for this.
-- **Evals in the build**: the Docker build runs the full test suite (86 tests acting out real failures: last-minute cancels, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
+- **Evals in the build**: the Docker build runs the full test suite (87 tests acting out real failures: last-minute cancels, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
 
 ### WA Box or a WhatsApp gateway?
 
