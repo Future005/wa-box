@@ -29,14 +29,14 @@ Prerequisites: Docker Desktop (Mac/Windows) or Docker Engine + Compose v2 (Linux
    - Windows: use PowerShell. WSL 2 must be enabled (Docker Desktop offers to do it).
 2. Clone the repo and `cd` into it.
 3. Run the setup script. Pass the user's choices as environment variables:
-   - Mac / Linux: `ADMIN_USER="their@email" ORG_NAME="Their org" GROUP_KEYWORDS="Cohort,Batch" sh scripts/setup.sh`
-   - Windows: `$env:ADMIN_USER="their@email"; $env:ORG_NAME="Their org"; $env:GROUP_KEYWORDS="Cohort,Batch"; powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
+   - Mac / Linux: `ADMIN_USER="their@email" ORG_NAME="Their org" sh scripts/setup.sh`
+   - Windows: `$env:ADMIN_USER="their@email"; $env:ORG_NAME="Their org"; powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
    - Port 3000 busy? Add `PORT=3005` (Mac/Linux) or `$env:PORT="3005"` (Windows).
 4. The first build takes 3–10 minutes (it downloads Chrome and runs the test suite). The script waits and prints the address, username and a one-time password. Give these to the user.
 5. Walk the user through, in the browser:
    1. Sign in, choose a new password.
    2. **WhatsApp & groups → Show QR code**, then on the phone: WhatsApp → Settings → Linked devices → Link a device → scan.
-   3. Set **Group keywords** (strongly recommended if they're in many groups), then **Sync from WhatsApp**.
+   3. Wait a minute: every group on the number syncs by itself (or press **Sync groups now**).
    4. Write a message, press **Send a test to my WhatsApp** (goes to their own "Message yourself" chat), and schedule one in practice mode to see how it works.
 6. Tell them: it only runs while the computer is on and awake; for dependable weekend sends, deploy to a server.
 
@@ -68,7 +68,7 @@ The production file is `docker-compose.yml`: two services.
 
 1. New resource → Git repository → build pack **Docker Compose** → `/docker-compose.yml`.
 2. Domain on `wabox` only, e.g. `https://example.com/wabox` (`BASE_PATH=/wabox`) or `https://wabox.example.com` (set `BASE_PATH=/`).
-3. Set `ADMIN_USER`, and optionally `ORG_NAME`, `GROUP_KEYWORDS`, `PUBLIC_URL`, in Coolify's Environment Variables (never in the repo). Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` itself.
+3. Set `ADMIN_USER`, and optionally `ORG_NAME`, `PUBLIC_URL`, in Coolify's Environment Variables (never in the repo). Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` itself.
 4. Deploy. The user finds the first admin password in Coolify (Environment Variables → `SERVICE_PASSWORD_ADMIN`) and changes it on first sign-in.
 5. Check `https://<domain>/<base>/healthz` returns `{"ok":true}`.
 6. Recommend an uptime monitor on `/health/monitor` (503 means someone should look).
@@ -93,7 +93,7 @@ app/                       WA Box app (Node 22, Express 5, better-sqlite3, vanil
   src/apikeys.js           API keys (hashed) + idempotency
   src/hooks.js             Outgoing webhooks: queue, signing, retries
   src/alerts.js            Alerts, check-in, done notes
-  src/groups.js            Saved groups, keywords, group lists
+  src/groups.js            Saved groups (all groups on the linked number; reset when the number changes), group lists
   src/auth.js              Users, sessions, passwords
   src/render.js            {group} {day} {date} (same as public/lib.js)
   src/time.js              India-time helpers

@@ -23,7 +23,7 @@
   <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.1.0"></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="MIT license"></a>
-  <img src="docs/badges/tests.svg" alt="87 tests passing">
+  <img src="docs/badges/tests.svg" alt="93 tests passing">
   <img src="docs/badges/node.svg" alt="Node 22 LTS">
   <img src="docs/badges/express.svg" alt="Express 5">
   <img src="docs/badges/sqlite.svg" alt="SQLite">
@@ -144,7 +144,7 @@ like a careful person, and make mistakes very hard:
 | Sending too fast | Random gaps between groups (30 s minimum, enforced on the server), typing indicator, start-time jitter |
 | Sending too much | Daily cap (default 30) and hourly cap (default 20), editable by admins only |
 | Sending the same thing twice | Write-ahead send log, chat-history check before any retry, duplicate guard across messages |
-| Sending to the wrong chat | Groups only (no personal chats), and only groups saved in WA Box that match your keywords |
+| Sending to the wrong chat | Groups only (no personal chats), and only groups synced from the linked number (switch numbers and the old number's groups disappear) |
 | Something going wrong at 7 AM on a Saturday | Alerts, morning check-in, uptime monitor endpoint, circuit breaker |
 | Getting it wrong while trying it out | Practice mode on by default; local copies always start in practice mode |
 
@@ -184,7 +184,7 @@ both parts, and prints your sign-in details. Then:
 
 1. Open `http://localhost:3000` and sign in with the printed username and one-time password. Choose your own password.
 2. **WhatsApp & groups** → show the QR code → on your phone: WhatsApp → Settings → Linked devices → Link a device → scan.
-3. **Sync from WhatsApp**. Set group keywords first if your phone is in many groups.
+3. Groups sync by themselves a minute after the number connects (every group, nothing left out). **Sync groups now** picks up new ones right away.
 4. Write your first message. When you're happy, **Safety & settings → Go live**.
 
 Other commands: `make up`, `make down`, `make logs`, `make status`, `make password`, `make update`
@@ -197,7 +197,7 @@ out at 7 AM on a Sunday, use a server.
 
 1. In Coolify: **New resource → Git repository** (your fork), build pack **Docker Compose**, file `/docker-compose.yml`.
 2. Domain for the `wabox` service, e.g. `https://example.com/wabox` (or a whole subdomain; set `BASE_PATH` to match). Give the `engine` service **no** domain.
-3. In Coolify's **Environment Variables**, set `ADMIN_USER` (your email), and optionally `ORG_NAME`, `GROUP_KEYWORDS` and `PUBLIC_URL`. Nothing personal goes in the repo.
+3. In Coolify's **Environment Variables**, set `ADMIN_USER` (your email), and optionally `ORG_NAME` and `PUBLIC_URL`. Nothing personal goes in the repo.
 4. Deploy. Coolify generates `SERVICE_PASSWORD_64_ENGINEKEY` and `SERVICE_PASSWORD_ADMIN` (the first admin's password; you change it on first sign-in).
 5. Point a free uptime monitor at `https://<your-domain>/wabox/health/monitor`.
 
@@ -219,7 +219,7 @@ you. The repo has an [`AGENTS.md`](AGENTS.md) that tells them how. Paste one of 
 ```text
 Clone https://github.com/Future005/wa-box and set up WA Box on this computer by following its AGENTS.md.
 Check Docker is installed and running first, and tell me how to install it if not.
-Use admin username: <your email>. Organisation name: <your org>. Group keywords: <e.g. Cohort, Batch>.
+Use admin username: <your email>. Organisation name: <your org>.
 When it's running, give me the address, my username and the one-time password, then walk me
 through linking WhatsApp. Keep it in practice mode.
 ```
@@ -267,7 +267,7 @@ The [user guide](docs/USER-GUIDE.md) covers everything, with pictures. In short:
 - **`app/`, the WA Box app**: Node.js 22, Express, SQLite. Serves the web app and the public API, runs the scheduler, keeps every record. The only public service.
 - **`engine/`, the WhatsApp engine**: a small private service around [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js) running real WhatsApp Web in headless Chrome. Keeps the login, reconnects, restarts Chrome when it misbehaves or grows too big, and falls back to the last WhatsApp Web version that worked. No domain, no published port, API key on every call.
 - **The contract between them**: a `4xx` from the engine means *definitely not sent*. Anything else (timeouts, 5xx, dropped connections) means *maybe sent*, and the app checks the group's chat before doing anything. Both sides have tests for this.
-- **Evals in the build**: the Docker build runs the full test suite (87 tests acting out real failures: last-minute aborts, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
+- **Evals in the build**: the Docker build runs the full test suite (93 tests acting out real failures: last-minute aborts, switching numbers, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
 
 ### WA Box or a WhatsApp gateway?
 
@@ -295,7 +295,6 @@ Set in `docker-compose.yml` (server) or `.env` (local copy).
 | `ADMIN_USER` | `admin` | First admin's username (an email works). |
 | `ADMIN_PASSWORD` | random, printed in the logs | First admin's one-time password. Changed on first sign-in. |
 | `ORG_NAME` | empty | Shown next to "WA Box". |
-| `GROUP_KEYWORDS` | empty (all groups) | Only offer groups whose names contain one of these. Editable in the app. |
 | `BASE_PATH` | `/wabox` | Path the app is served under. `/` for a whole domain. |
 | `DRY_RUN` | `true` | Start in practice mode. Admins switch it off in the app. |
 | `DAILY_CAP` | `30` | Messages per day. Editable in the app. |

@@ -293,7 +293,7 @@
       <!-- WhatsApp (admin) -->
       <section class="view" data-view="whatsapp">
         <header class="page-head">
-          <div><h1>WhatsApp &amp; groups</h1><p class="lede">The phone number WA Box sends from, and which of its groups your team can pick.</p></div>
+          <div><h1>WhatsApp &amp; groups</h1><p class="lede">The phone number WA Box sends from, and its groups.</p></div>
         </header>
         <div class="settings-grid">
           <div class="panel">
@@ -313,16 +313,14 @@
             </div>
             <p class="hint">Open WhatsApp on that phone at least once a week. A linked device logs out if the phone stays offline for about 14 days.</p>
           </div>
-          <form class="panel" id="keywords-form">
-            <h2 class="panel-title">Which groups show up</h2>
-            <label class="fld"><span>Group name contains</span><input name="keywords" placeholder="e.g. Cohort, Masterclass" autocomplete="off"><small>Comma-separated. Not case-sensitive. Leave empty to show every group.</small></label>
-            <p class="hint" id="sync-detail"></p>
-            <p class="form-error" id="keywords-error"></p>
+          <div class="panel" id="groups-panel">
+            <h2 class="panel-title">Groups on this number</h2>
+            <p class="hint">Every group on the linked number is saved, so your team can pick any of them (the picker has search). New groups show up on their own every few hours, or right away with the button.</p>
+            <p class="sync-detail" id="sync-detail"></p>
             <div class="btn-row">
-              <button class="btn btn-primary" type="submit">Save and sync</button>
-              <button class="btn btn-ghost" type="button" id="wa-sync">Sync now</button>
+              <button class="btn btn-primary" type="button" id="wa-sync">Sync groups now</button>
             </div>
-          </form>
+          </div>
         </div>
       </section>
 

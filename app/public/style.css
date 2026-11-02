@@ -573,3 +573,5 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
 #dialog-content .row-2 { margin-bottom: 12px; }
 .pill.cancelled { white-space: nowrap; }
+.sync-detail { font-size: 14px; color: var(--ink-2); margin: 4px 0 12px; }
+.sync-detail.bad { color: var(--red); }

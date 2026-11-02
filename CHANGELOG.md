@@ -12,6 +12,10 @@
 - Wording: "Cancelled" is now "Aborted" everywhere in the app.
 
 ### Fixed
+- **Groups follow the linked number.** Linking a different number (or unlinking) hides the old number's groups at once, and the new number's groups sync in by themselves. Scheduled messages that went to the old groups get a clear warning.
+- **Every group is synced**, nothing filtered by name. The "Which groups show up" keywords and the "Save and sync" button are gone; there's one **Sync groups now** button.
+- Sync no longer errors when pressed twice, retries by itself if WhatsApp is still loading chats, re-checks 10 minutes after linking (WhatsApp loads older chats gradually), and refreshes every 6 hours. A group missing from one read isn't dropped until it's missing twice.
+- Signing in no longer shows a red "WhatsApp isn't connected" banner while WhatsApp is just starting. The banner now says what's needed ("scan the QR code") and is red only when someone has to act.
 - After a redeploy, WhatsApp could fail to start with "The profile appears to be in use by another Chromium process … on another computer". The engine now removes the stale lock the old container left behind and starts normally, keeping the login.
 
 ### API

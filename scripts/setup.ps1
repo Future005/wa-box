@@ -1,6 +1,6 @@
 # WA Box: set up and start a local copy (Windows PowerShell). Safe to run again.
 #   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
-# Optional, before running:  $env:ADMIN_USER="you@example.com"; $env:ORG_NAME="Acme"; $env:GROUP_KEYWORDS="Cohort,Batch"
+# Optional, before running:  $env:ADMIN_USER="you@example.com"; $env:ORG_NAME="Acme"
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
@@ -23,7 +23,6 @@ if (-not (Test-Path .env)) {
     -replace '^WA_ENGINE_KEY=.*', "WA_ENGINE_KEY=$key" `
     -replace '^ADMIN_USER=.*', "ADMIN_USER=$admin" `
     -replace '^ORG_NAME=.*', "ORG_NAME=$($env:ORG_NAME)" `
-    -replace '^GROUP_KEYWORDS=.*', "GROUP_KEYWORDS=$($env:GROUP_KEYWORDS)" `
     -replace '^PORT=.*', "PORT=$port" | Set-Content -Encoding ascii .env
 } else { Say 'Using the existing .env' }
 $PORT = ((Select-String -Path .env -Pattern '^PORT=(.*)').Matches.Groups[1].Value); if (-not $PORT) { $PORT = '3000' }

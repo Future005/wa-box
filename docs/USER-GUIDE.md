@@ -146,7 +146,7 @@ Filter to **Problems** to see only what needs attention. Click a row for the ful
 | **Failed** | WhatsApp refused it, e.g. the number was removed from the group. | Fix the cause (re-add the number), then **Send again**. |
 | **Missed** | It was more than 2 hours late (server or WhatsApp was down). Sending it hours late would confuse people. | Duplicate it with a new time if it still matters. |
 | **Duplicate blocked** | The same text already went to that group in the last 20 hours. | Usually right. If it really should go again, **Send again**. |
-| **Skipped** | The group is no longer in WA Box's saved list (left, renamed, or no longer matches the keywords). | Sync groups, then duplicate the message. |
+| **Skipped** | The group is no longer in WA Box's saved list (you left it, or a different number is linked now). | Sync groups, then duplicate the message. |
 
 If three sends fail in a row, WA Box pauses all sending and tells the admins. That protects the number while someone looks.
 
@@ -176,8 +176,9 @@ If three sends fail in a row, WA Box pauses all sending and tells the admins. Th
 
 1. **WhatsApp & groups → Show QR code**.
 2. On the phone: WhatsApp → Settings → **Linked devices** → **Link a device** → scan.
-3. **Group keywords**: only groups whose names contain one of these are offered (e.g. *Cohort, Masterclass*). Keep the list short if the phone is in many groups.
-4. **Sync from WhatsApp**. Do this again whenever you join or rename groups.
+3. Every group on the number syncs by itself about a minute later. Nothing is filtered out; the group picker has search.
+4. New groups show up every few hours on their own, or press **Sync groups now**.
+5. **Changing the number?** Unlink it (or link a different phone). The old number's groups disappear right away and the new number's groups sync in. If scheduled messages went to the old number's groups, WA Box warns you so you can pick groups again.
 
 Open WhatsApp on that phone at least once a week; linked devices log out after about 14 days
 without the phone. Use a number that has been active for a while.

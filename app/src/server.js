@@ -134,7 +134,7 @@ api.get('/status', (req, res) => {
   const s = sched.state;
   const running = s.runningJobId ? db.prepare('SELECT id,title FROM jobs WHERE id=?').get(s.runningJobId) : null;
   res.json({
-    wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, error: req.user.role === 'admin' ? s.wa.error : undefined },
+    wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, since: s.wa.since || 0, error: req.user.role === 'admin' ? s.wa.error : undefined },
     dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
     quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: LOCAL,
     sentToday: sched.sentToday(), issues: alerts.openIssues().length,
@@ -148,8 +148,8 @@ api.get('/status', (req, res) => {
 api.get('/groups', (_req, res) => res.json({ groups: savedGroups.list(), sync: savedGroups.status() }));
 // Background sync from WhatsApp (one read of the chat list WhatsApp Web already has).
 api.post('/groups/sync', wrap(async (req, res) => {
-  if (sched.state.wa.status !== 'ready') throw bad('WhatsApp is not connected yet');
-  const err = savedGroups.startSync(req.user.username);
+  if (sched.state.wa.status !== 'ready') throw bad('WhatsApp is not connected yet. Link the number first, then sync.');
+  const err = savedGroups.startSync(req.user.username, String(sched.state.wa.phone || '').replace(/\D/g, ''));
   if (err) throw bad(err);
   res.json({ ok: true, sync: savedGroups.status() });
 }));
@@ -169,13 +169,8 @@ api.delete('/lists/:id', wrap(async (req, res) => {
   audit(req.user.username, 'list_deleted', `#${req.params.id}`);
   res.json({ ok: true });
 }));
-api.put('/groups/keywords', requireAdmin, wrap(async (req, res) => {
-  const raw = req.body?.keywords;
-  const list = Array.isArray(raw) ? raw : String(raw || '').split(',');
-  const kws = savedGroups.setKeywords(list);
-  audit(req.user.username, 'group_keywords', kws.join(', ') || '(all groups)');
-  res.json({ ok: true, keywords: kws });
-}));
+// Old clients: keywords no longer filter groups (every group on the number is saved).
+api.put('/groups/keywords', requireAdmin, (_req, res) => res.json({ ok: true, keywords: [] }));
 
 // ---------- jobs ----------
 const upload = multer({
@@ -352,6 +347,7 @@ api.post('/wa/start', requireAdmin, wrap(async (req, res) => {
 }));
 api.post('/wa/logout', requireAdmin, wrap(async (req, res) => {
   await wa.logout();
+  savedGroups.forgetNumber('', req.user.username);   // its groups shouldn't stay on screen
   audit(req.user.username, 'wa_logout');
   res.json({ ok: true });
 }));

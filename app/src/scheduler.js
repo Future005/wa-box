@@ -102,9 +102,9 @@ async function refreshWa() {
   const ready = now === 'ready';
   if (ready) {
     if (!state.readySince) state.readySince = Date.now();
-    if (!state.autoSynced && savedGroups.count() === 0 && Date.now() - state.readySince > (FAST ? 0 : 90 * 1000)) {
-      state.autoSynced = true; savedGroups.startSync('system');
-    }
+    // Groups follow the linked number: a new number hides the old one's groups at once, then
+    // syncs (after a minute, so WhatsApp Web has loaded the chats), retries, and refreshes.
+    savedGroups.keepInStep(String(state.wa.phone || '').replace(/\D/g, ''), { canSync: Date.now() - state.readySince > (FAST ? 0 : 60 * 1000) });
     await alerts.clear('wa_down', 'WhatsApp is connected again. Scheduled messages will go out.', { waReady: true });
   } else {
     state.readySince = 0;
@@ -341,7 +341,7 @@ async function runJob(job) {
     // Hash of exactly what this group gets, so {group}/{day}/{date} don't defeat the duplicate guard.
     const msgHash = hashMessage(textFor(job, group), job.media_url || job.media_file);
     if (!savedGroups.get(group.id)) {
-      upsertSend(job, group, { status: 'skipped', error: 'Group is no longer in the saved list (left it, renamed, or no longer matches the keywords)' });
+      upsertSend(job, group, { status: 'skipped', error: 'Group is no longer on the linked number (left it, removed, or a different number is linked now)' });
       logEvent('warn', 'send', 'Skipped: group no longer in saved list', { jobId: job.id, group: group.name });
       continue;
     }

@@ -50,7 +50,6 @@ services:
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - ORG_NAME=${ORG_NAME:-}
-      - GROUP_KEYWORDS=${GROUP_KEYWORDS:-}
       - DRY_RUN=true
       - DAILY_CAP=${DAILY_CAP:-30}
       - MAX_LATE_MINUTES=${MAX_LATE_MINUTES:-120}

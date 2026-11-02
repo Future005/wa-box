@@ -472,8 +472,8 @@ admins; nothing is lost and nothing is sent twice.
 
 ## FAQ
 
-**Can I send to a group that isn't in WA Box yet?** No. Groups must be synced and match the
-group keywords in *WhatsApp & groups*. This keeps an automation from messaging the wrong chat.
+**Can I send to a group that isn't in WA Box yet?** No. Groups must be synced from the linked number
+(*WhatsApp & groups*). This keeps an automation from messaging the wrong chat.
 
 **Can I send to a person instead of a group?** No. WA Box is for groups only, on purpose.
 

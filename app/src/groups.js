@@ -13,33 +13,23 @@ CREATE TABLE IF NOT EXISTS wa_groups (
 );
 `);
 
-// Starting keywords until an admin changes them (GROUP_KEYWORDS="Cohort,Masterclass").
-// Empty means every group is offered; on a phone with hundreds of groups, set a few keywords.
-const DEFAULT_KEYWORDS = String(process.env.GROUP_KEYWORDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-const MIN_SYNC_INTERVAL_MS = 2 * 60 * 1000;
+// Every group on the linked number is saved: nothing is filtered out. The picker has search.
+// Groups belong to the number they were synced from: when a different number is linked (or the
+// number is unlinked), the old number's groups are hidden at once and a fresh sync starts.
+addColumn('wa_groups', 'missed_syncs', 'INTEGER NOT NULL DEFAULT 0');
+const MIN_SYNC_GAP_MS = 15 * 1000;            // only guards against double-clicks
 const SYNC_TIMEOUT_MS = 5 * 60 * 1000;
+const RETRY_AFTER_FAIL_MS = 2 * 60 * 1000;    // a failed sync retries by itself
+const RECHECK_AFTER_LINK_MS = 10 * 60 * 1000; // WhatsApp keeps loading older chats after a new link
+const REFRESH_EVERY_MS = 6 * 3600 * 1000;     // pick up new groups even if nobody presses Sync
 
-const sync = { running: false, startedAt: 0, finishedAt: getSetting('groups_synced_at', 0), error: null, total: 0, matched: 0, by: null };
+const sync = { running: false, startedAt: 0, finishedAt: getSetting('groups_synced_at', 0), error: null, total: 0, matched: 0, by: null,
+  failures: 0, lastFailAt: 0, linkedAt: 0, rechecked: false };
 
-function keywords() {
-  const k = getSetting('group_keywords', DEFAULT_KEYWORDS);
-  return Array.isArray(k) ? k : DEFAULT_KEYWORDS;
-}
-function setKeywords(list) {
-  const clean = [...new Set((list || []).map(s => String(s).trim()).filter(Boolean).map(s => s.slice(0, 40)))].slice(0, 20);
-  setSetting('group_keywords', clean);
-  return clean;
-}
-function matches(name, kws = keywords()) {
-  if (!kws.length) return true; // no keywords = keep every group
-  const n = name.toLowerCase();
-  return kws.some(k => n.includes(k.toLowerCase()));
-}
+function phone() { return getSetting('groups_phone', ''); }
 
 function list() {
-  const kws = keywords();
-  return db.prepare('SELECT id, name FROM wa_groups WHERE active = 1 ORDER BY name COLLATE NOCASE').all()
-    .filter(g => matches(g.name, kws));
+  return db.prepare('SELECT id, name FROM wa_groups WHERE active = 1 ORDER BY name COLLATE NOCASE').all();
 }
 function get(id) {
   return db.prepare('SELECT id, name FROM wa_groups WHERE id = ? AND active = 1').get(id);
@@ -48,43 +38,96 @@ function count() {
   return db.prepare('SELECT COUNT(*) n FROM wa_groups WHERE active = 1').get().n;
 }
 
-async function runSync(by) {
+/** The linked number changed or was unlinked: hide every saved group right away. */
+function forgetNumber(newPhone, by = 'system') {
+  const hidden = db.prepare('UPDATE wa_groups SET active = 0, missed_syncs = 0 WHERE active = 1').run().changes;
+  setSetting('groups_phone', newPhone || '');
+  setSetting('groups_synced_at', 0);
+  Object.assign(sync, { finishedAt: 0, error: null, total: 0, matched: 0, failures: 0, lastFailAt: 0, startedAt: 0, linkedAt: Date.now(), rechecked: false });
+  audit(by, 'groups_reset', newPhone ? `New number +${newPhone}: hid ${hidden} groups from the previous number` : `Number unlinked: hid ${hidden} groups`);
+  return hidden;
+}
+
+async function runSync(by, forPhone) {
   sync.running = true; sync.startedAt = Date.now(); sync.error = null; sync.by = by;
   try {
     // One read of the chat list that WhatsApp Web already holds in the browser.
     const all = await wa.listGroups({ timeoutMs: SYNC_TIMEOUT_MS });
-    const kws = keywords();
-    const keep = all.filter(g => matches(g.name, kws));
+    if (forPhone && phone() && phone() !== forPhone) return;   // the number changed while we were reading
     const now = Date.now();
-    const upsert = db.prepare(`INSERT INTO wa_groups(id,name,active,updated_at) VALUES(?,?,1,?)
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=1, updated_at=excluded.updated_at`);
+    const seen = new Set(all.map(g => g.id));
+    const upsert = db.prepare(`INSERT INTO wa_groups(id,name,active,updated_at,missed_syncs) VALUES(?,?,1,?,0)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=1, updated_at=excluded.updated_at, missed_syncs=0`);
     db.transaction(() => {
-      // Groups not seen this time (left, or no longer matching) become inactive.
-      db.prepare('UPDATE wa_groups SET active = 0').run();
-      for (const g of keep) upsert.run(g.id, g.name, now);
+      for (const g of all) upsert.run(g.id, g.name, now);
+      // A group missing from one read may just not be loaded yet (WhatsApp loads chats gradually),
+      // so it's hidden only after it's missing twice in a row.
+      for (const g of db.prepare('SELECT id, missed_syncs FROM wa_groups WHERE active = 1').all()) {
+        if (seen.has(g.id)) continue;
+        if (g.missed_syncs >= 1) db.prepare('UPDATE wa_groups SET active = 0, missed_syncs = 0 WHERE id = ?').run(g.id);
+        else db.prepare('UPDATE wa_groups SET missed_syncs = 1 WHERE id = ?').run(g.id);
+      }
     })();
-    sync.total = all.length; sync.matched = keep.length;
+    if (forPhone) setSetting('groups_phone', forPhone);
+    sync.total = all.length; sync.matched = count(); sync.failures = 0;
     sync.finishedAt = now; setSetting('groups_synced_at', now);
-    audit(by, 'groups_synced', `${keep.length} of ${all.length} groups match ${kws.join(', ') || '(all)'}`);
+    audit(by, 'groups_synced', `${all.length} groups on this number`);
+    warnAboutMissingGroups();
   } catch (e) {
-    sync.error = /timeout|aborted/i.test(e.message)
-      ? 'WhatsApp is still loading your chats. Wait a few minutes and sync again.'
-      : e.message;
+    sync.failures++; sync.lastFailAt = Date.now();
+    sync.error = /timeout|timed out|aborted/i.test(e.message)
+      ? 'WhatsApp is still loading the chats on this number. WA Box tries again by itself in 2 minutes.'
+      : /not ready|409|not connected/i.test(e.message) ? 'WhatsApp is not connected yet. Link the number first.'
+      : `${e.message}. WA Box tries again by itself in 2 minutes.`;
   } finally {
     sync.running = false;
   }
 }
 
-/** Start a background sync. Returns an error string if it can't start. */
-function startSync(by) {
-  if (sync.running) return null;
-  if (Date.now() - sync.startedAt < MIN_SYNC_INTERVAL_MS) return 'Synced very recently. Try again in a couple of minutes.';
-  runSync(by);
+/** Start a background sync. Returns an error string only if it can't start. */
+function startSync(by, forPhone) {
+  if (sync.running) return null;   // already syncing: the page shows progress
+  if (Date.now() - sync.startedAt < MIN_SYNC_GAP_MS) return null;
+  runSync(by, forPhone);
   return null;
 }
 
+/**
+ * Called by the scheduler every tick while WhatsApp is ready. Keeps the saved groups in step with
+ * the linked number: a different number resets them; then sync, retry failures, re-check once
+ * shortly after linking, and refresh every few hours.
+ */
+function keepInStep(currentPhone, { canSync = true } = {}) {
+  if (!currentPhone) return;
+  // Groups saved before WA Box tracked numbers (or after an unlink) can't be trusted to belong to
+  // this number: clear them and sync fresh. Same for a different number.
+  if (phone() !== currentPhone) forgetNumber(currentPhone);
+  if (sync.running || !canSync) return;
+  const now = Date.now();
+  if (!sync.linkedAt) sync.linkedAt = now;
+  const never = !sync.finishedAt || !phone();
+  const retry = sync.error && now - sync.lastFailAt > RETRY_AFTER_FAIL_MS && sync.failures < 10;
+  const recheck = !sync.rechecked && sync.finishedAt && now - sync.linkedAt > RECHECK_AFTER_LINK_MS;
+  const stale = sync.finishedAt && now - sync.finishedAt > REFRESH_EVERY_MS;
+  if (recheck) sync.rechecked = true;
+  if ((never && !sync.error) || retry || recheck || stale) startSync('system', currentPhone);
+}
+
+// Scheduled messages that go to groups this number isn't in (e.g. after switching numbers) would
+// skip those groups. Say so once, plainly, so someone fixes them before they're due.
+function warnAboutMissingGroups() {
+  const alerts = require('./alerts');
+  const active = new Set(list().map(g => g.id));
+  const affected = db.prepare("SELECT id, title, message, groups_json FROM jobs WHERE status IN ('scheduled','running')").all()
+    .filter(j => JSON.parse(j.groups_json).some(g => !active.has(g.id)));
+  if (!affected.length) { alerts.clear('groups_missing').catch(() => {}); return; }
+  const names = affected.slice(0, 3).map(j => `“${(j.title || j.message.split('\n')[0]).slice(0, 40)}”`).join(', ');
+  alerts.raise('groups_missing', 'warn', `${affected.length} scheduled message${affected.length === 1 ? ' goes' : 's go'} to groups that aren't on the linked number (${names}${affected.length > 3 ? '…' : ''}). Those groups will be skipped. Open each message and pick groups again.`).catch(() => {});
+}
+
 function status() {
-  return { ...sync, keywords: keywords(), saved: list().length };
+  return { running: sync.running, startedAt: sync.startedAt, finishedAt: sync.finishedAt, error: sync.error, total: sync.total,
+    saved: count(), phone: phone(), by: sync.by };
 }
 
 // ---------- saved group lists ("Weekend cohorts", "Thu-Fri batch") ----------
@@ -142,4 +185,4 @@ function saveList({ id, name, groupIds }, by) {
 }
 function deleteList(id) { db.prepare('DELETE FROM group_lists WHERE id=?').run(Number(id)); }
 
-module.exports = { list, get, count, startSync, status, keywords, setKeywords, matches, lists, saveList, deleteList, rememberUsage };
+module.exports = { _resetGap: () => { sync.startedAt = 0; }, list, get, count, startSync, status, forgetNumber, keepInStep, lists, saveList, deleteList, rememberUsage };

@@ -1,7 +1,7 @@
 #!/bin/sh
 # WA Box: set up and start a local copy (Mac / Linux). Safe to run again.
 #   sh scripts/setup.sh
-# Optional, before running:  ADMIN_USER=you@example.com ORG_NAME="Acme" GROUP_KEYWORDS="Cohort,Batch" PORT=3000
+# Optional, before running:  ADMIN_USER=you@example.com ORG_NAME="Acme" PORT=3000
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -20,7 +20,6 @@ if [ ! -f .env ]; then
   sed -e "s|^WA_ENGINE_KEY=.*|WA_ENGINE_KEY=$KEY|" \
       -e "s|^ADMIN_USER=.*|ADMIN_USER=${ADMIN_USER:-admin}|" \
       -e "s|^ORG_NAME=.*|ORG_NAME=${ORG_NAME:-}|" \
-      -e "s|^GROUP_KEYWORDS=.*|GROUP_KEYWORDS=${GROUP_KEYWORDS:-}|" \
       -e "s|^PORT=.*|PORT=${PORT:-3000}|" .env.example > .env
   chmod 600 .env
 else

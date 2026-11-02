@@ -161,6 +161,7 @@
         if (S.view === 'scheduled') renderScheduled();
       }
       if (S.drawerJob) { const j = findJob(S.drawerJob); if (j) fillDrawer(j); }
+      if (S.view === 'whatsapp') { await loadGroups(); renderSyncDetail(); }
       S.tick = setTimeout(loop, busy ? 4000 : 15000);
     };
     S.tick = setTimeout(loop, 4000);
@@ -204,7 +205,14 @@
     $('#conn').setAttribute('href', isAdmin() ? '#whatsapp' : '#today');
 
     const a = [];
-    if (wa !== 'ready' && wa !== 'unknown') a.push(['bad', "WhatsApp isn't connected. Scheduled messages will wait until it is.", isAdmin() ? ['Connect', '#whatsapp'] : null]);
+    // Say exactly what's going on, and only use red when someone has to act: starting up or
+    // reconnecting for a moment is normal (e.g. right after a redeploy) and gets no banner.
+    const forMin = s.wa.since ? (Date.now() - s.wa.since) / 60000 : 99;
+    const link = isAdmin() ? ['Open WhatsApp & groups', '#whatsapp'] : null;
+    if (wa === 'qr_ready') a.push(['warn', isAdmin() ? 'WhatsApp needs to be linked: scan the QR code. Scheduled messages wait until then.' : 'WhatsApp needs to be linked by an admin. Scheduled messages wait until then.', link]);
+    else if (['initializing', 'authenticating', 'created', 'unknown'].includes(wa) && forMin < 3) { /* starting: no banner */ }
+    else if (wa === 'unreachable' && forMin < 2) { /* engine restarting: no banner */ }
+    else if (wa !== 'ready') a.push(['bad', `WhatsApp isn't connected${wa === 'unreachable' ? ' (the engine is offline)' : ''}. Scheduled messages wait until it is.`, link]);
     if (s.paused) a.push(['warn', 'Sending is paused. Scheduled messages are waiting.', isAdmin() ? ['Resume', 'resume'] : null]);
     if (s.dryRun) a.push(['warn', s.local ? "Local copy: practice mode is on. Messages run on schedule but don't reach WhatsApp. It switches back on every time this copy starts."
       : "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
@@ -674,7 +682,7 @@
     // unavailable ones first (so they can be removed), then A to Z; order never changes while ticking
     shown.sort((a, b) => (!!b.missing - !!a.missing) || byName(a, b));
     $('#group-list').innerHTML = shown.length ? shown.map(g => `<label class="g-opt${g.missing ? ' missing' : ''}"><input type="checkbox" data-id="${esc(g.id)}" ${c.picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span>${g.missing ? '<span class="hint">No longer available</span>' : ''}</label>`).join('')
-      : `<div class="g-empty">${S.groups.length ? 'No group matches that search.' : S.sync?.running ? 'Syncing groups from WhatsApp…' : 'No groups yet. Once WhatsApp is connected, press “Sync from WhatsApp”.'}</div>`;
+      : `<div class="g-empty">${S.groups.length ? 'No group matches that search.' : S.sync?.running ? 'Syncing groups from WhatsApp…' : (S.status?.wa?.status === 'ready' ? 'No groups yet. They sync a minute after the number connects, or press “Sync from WhatsApp”.' : 'No groups yet. An admin links the number in WhatsApp & groups, then its groups appear here.')}</div>`;
     $('#picked-count').textContent = c.picked.size;
     $('#list-chips').innerHTML = S.lists.map(l => {
       const ids = l.groups.map(g => g.id); const n = ids.filter(id => c.picked.has(id)).length;
@@ -708,7 +716,7 @@
   $('#groups-none').addEventListener('click', () => { C().picked.clear(); renderPicker(); markDirty(); });
   $('#groups-sync').addEventListener('click', syncGroups);
   async function syncGroups() {
-    try { await api('groups/sync', { method: 'POST' }); toast('Syncing groups from WhatsApp. This can take a minute.'); }
+    try { await api('groups/sync', { method: 'POST' }); toast('Syncing every group on this number. This can take a minute.'); }
     catch (err) { toast(err.message, true); }
     await loadGroups(); if (S.view === 'compose') renderPicker(); if (S.view === 'whatsapp') renderSyncDetail();
   }
@@ -1024,14 +1032,20 @@
     $('#wa-logout').classList.toggle('hidden', !ready);
     $('#qr-wrap').classList.add('hidden');
     if (!ready && s.status === 'qr_ready') pollQr();
-    $('#keywords-form').keywords.value = (S.sync?.keywords || []).join(', ');
     renderSyncDetail();
   }
   function renderSyncDetail() {
     const s = S.sync; if (!s) return;
-    $('#sync-detail').textContent = s.running ? 'Syncing now. Large accounts can take a minute or two.' : s.error ? `Last sync failed: ${s.error}` :
-      s.finishedAt ? `${plural(s.saved, 'group')} shown to your team. Last synced ${ago(s.finishedAt)}${s.total ? `, out of ${s.total} groups on this number` : ''}.` : 'Not synced yet. It runs once automatically after WhatsApp connects.';
-    $('#wa-sync').disabled = !!s.running;
+    const ready = S.status?.wa?.status === 'ready';
+    const el = $('#sync-detail');
+    el.className = 'sync-detail' + (s.error && !s.running ? ' bad' : '');
+    el.textContent = !ready && !s.saved ? 'Link a number first. Its groups are synced a minute after it connects.'
+      : s.running ? 'Syncing every group on this number… Large accounts can take a minute or two.'
+      : s.error ? s.error
+      : s.finishedAt ? `${plural(s.saved, 'group')} saved${s.phone ? ` from +${s.phone}` : ''}. Last synced ${ago(s.finishedAt)}.`
+      : 'Getting this number’s groups. They appear here a minute after it connects.';
+    $('#wa-sync').disabled = !!s.running || !ready;
+    $('#wa-sync').textContent = s.running ? 'Syncing…' : 'Sync groups now';
   }
   function pollQr() {
     clearInterval(S.qrTimer);
@@ -1054,11 +1068,6 @@
     try { await api('wa/logout', { method: 'POST' }); toast('Number unlinked'); renderWhatsapp(); } catch (err) { toast(err.message, true); }
   });
   $('#wa-sync').addEventListener('click', syncGroups);
-  $('#keywords-form').addEventListener('submit', async e => {
-    e.preventDefault(); $('#keywords-error').textContent = '';
-    try { await api('groups/keywords', { method: 'PUT', body: { keywords: e.target.keywords.value } }); toast('Keywords saved'); await syncGroups(); }
-    catch (err) { $('#keywords-error').textContent = err.message; }
-  });
 
   // ============ Team (admin) ============
   async function renderTeam() {
@@ -1205,7 +1214,7 @@
       const words = { login: 'Signed in', login_failed: 'Failed sign-in', job_created: 'Scheduled a message', job_edited: 'Edited a message', job_cancelled: 'Aborted a message', job_skipped: 'Aborted one time of a weekly message', job_moved: 'Rescheduled a message', job_split: 'Aborted a message to change the rest',
         job_send_now: 'Started a message early', job_missed: 'A message was missed', daily_cap: 'Daily limit reached', wa_start: 'Started WhatsApp', wa_logout: 'Unlinked WhatsApp',
         dry_run: 'Changed practice mode', paused: 'Paused or resumed sending', user_created: 'Added a person', user_reset: 'Reset a password', user_disabled: 'Disabled a person',
-        user_enabled: 'Enabled a person', groups_synced: 'Synced groups', group_keywords: 'Changed group keywords', list_saved: 'Saved a group list', list_deleted: 'Deleted a group list',
+        user_enabled: 'Enabled a person', groups_synced: 'Synced groups', groups_reset: 'Linked number changed: old groups hidden', group_keywords: 'Changed group keywords', list_saved: 'Saved a group list', list_deleted: 'Deleted a group list',
         password_changed: 'Changed their password', seed_admin: 'Created the first admin', admin_renamed: 'Renamed the admin account' };
       $('#audit-table tbody').innerHTML = audit.map(a => `<tr><td class="when">${esc(whenLabel(a.at))}</td><td>${esc(a.actor)}</td><td>${esc(words[a.action] || a.action.replace(/_/g, ' '))} <span class="hint">${esc(a.detail)}</span></td></tr>`).join('');
     } catch { /* ignore */ }
