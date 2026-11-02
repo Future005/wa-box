@@ -67,7 +67,7 @@
 
   // ============ state + API ============
   const S = { me: null, status: null, groups: [], sync: null, lists: [], templates: [], upcoming: [], past: [], sends: [],
-    view: null, params: {}, compose: null, schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
+    view: null, params: {}, compose: null, numbers: [], viewPhone: null, schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
 
   async function api(path, opts = {}) {
     const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'wabox' }, credentials: 'same-origin' };
@@ -196,12 +196,19 @@
   async function refreshStatus() {
     try { S.status = await api('status'); } catch { return; }
     const s = S.status, wa = s.wa.status;
+    // A different number got linked (or a first one): pick up its groups, lists and messages.
+    if ((s.number || '') !== linkedPhone() || (s.numbers || 0) !== S.numbers.length) {
+      const changed = linkedPhone() && (s.number || '') !== linkedPhone();
+      await loadNumbers();
+      if (changed) { S.viewPhone = null; await Promise.all([loadGroups(), loadJobs(), loadLists()]); toast(`Now using ${fmtPhone(s.number)}. The previous number's messages are kept and wait for it.`); if (['today', 'scheduled', 'lists'].includes(S.view)) route(); }
+    }
+    renderNumberSwitch();
     const conn = { ready: ['ok', 'WhatsApp connected'], qr_ready: ['warn', 'Waiting for QR scan'], authenticating: ['warn', 'Connecting…'],
       initializing: ['warn', 'Starting WhatsApp…'], created: ['warn', 'Not connected'], disconnected: ['bad', 'Disconnected'],
       failed: ['bad', 'Connection failed'], action_required: ['bad', 'Needs attention'], unreachable: ['bad', 'Engine offline'], unknown: ['warn', 'Checking…'] }[wa] || ['warn', wa];
     $('#conn-dot').className = 'dot ' + conn[0];
     $('#conn-title').textContent = conn[1];
-    $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, s.wa.phone ? '+' + s.wa.phone : ''].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
+    $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, fmtPhone(s.wa.phone)].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
     $('#conn').setAttribute('href', isAdmin() ? '#whatsapp' : '#today');
 
     const a = [];
@@ -213,6 +220,10 @@
     else if (['initializing', 'authenticating', 'created', 'unknown'].includes(wa) && forMin < 3) { /* starting: no banner */ }
     else if (wa === 'unreachable' && forMin < 2) { /* engine restarting: no banner */ }
     else if (wa !== 'ready') a.push(['bad', `WhatsApp isn't connected${wa === 'unreachable' ? ' (the engine is offline)' : ''}. Scheduled messages wait until it is.`, link]);
+    if (viewingAway()) {
+      const n = S.numbers.find(x => x.phone === S.viewPhone) || {};
+      a.unshift(['warn', `You're looking at ${fmtPhone(S.viewPhone)}${n.name ? ` (${n.name})` : ''}. It isn't the linked number, so nothing sends from it: ${n.upcoming ? `its ${plural(n.upcoming, 'scheduled message')} ${n.upcoming === 1 ? 'waits' : 'wait'} until it's linked again. You can still abort or reschedule ${n.upcoming === 1 ? 'it' : 'them'}.` : 'nothing is waiting on it.'}`, ['Back to ' + fmtPhone(linkedPhone()), 'back-to-linked']]);
+    }
     if (s.paused) a.push(['warn', 'Sending is paused. Scheduled messages are waiting.', isAdmin() ? ['Resume', 'resume'] : null]);
     if (s.dryRun) a.push(['warn', s.local ? "Local copy: practice mode is on. Messages run on schedule but don't reach WhatsApp. It switches back on every time this copy starts."
       : "Practice mode is on. Messages run on schedule but don't reach WhatsApp.", isAdmin() ? ['Go live', '#settings'] : null]);
@@ -222,24 +233,50 @@
   }
   $('#alerts').addEventListener('click', async e => {
     const b = e.target.closest('[data-alert]'); if (!b) return;
+    if (b.dataset.alert === 'back-to-linked') { $('#number-select').value = linkedPhone(); return viewNumber(null); }
     if (b.dataset.alert === 'resume') { try { await api('settings', { method: 'PUT', body: { paused: false } }); toast('Sending resumed'); refreshStatus(); } catch (err) { toast(err.message, true); } }
   });
 
+  // ---- number profiles: which number's data is on screen ----
+  const fmtPhone = p => (!p ? '' : /^91\d{10}$/.test(p) ? `+91 ${p.slice(2, 7)} ${p.slice(7)}` : '+' + p);
+  const qPhone = sep => (S.viewPhone ? `${sep}phone=${encodeURIComponent(S.viewPhone)}` : '');
+  const linkedPhone = () => (S.numbers.find(n => n.current) || {}).phone || '';
+  const viewingAway = () => !!S.viewPhone && S.viewPhone !== linkedPhone();
+  async function loadNumbers() {
+    try { S.numbers = (await api('numbers')).numbers; } catch { return; }
+    if (S.viewPhone && !S.numbers.some(n => n.phone === S.viewPhone)) S.viewPhone = null;
+    renderNumberSwitch();
+  }
+  function renderNumberSwitch() {
+    const wrap = $('#numsw'), sel = $('#number-select');
+    wrap.classList.toggle('hidden', S.numbers.length < 2);
+    wrap.classList.toggle('away', viewingAway());
+    const linked = S.status?.wa?.status === 'ready';
+    sel.innerHTML = S.numbers.map(n => `<option value="${esc(n.phone)}"${(S.viewPhone || linkedPhone()) === n.phone ? ' selected' : ''}>${esc(fmtPhone(n.phone))}${n.name ? ' · ' + esc(n.name) : ''}${n.current ? (linked ? ' (linked)' : ' (in use)') : n.upcoming ? ` (${n.upcoming} waiting)` : ''}</option>`).join('');
+  }
+  async function viewNumber(phone) {
+    S.viewPhone = phone && phone !== linkedPhone() ? phone : null;
+    closeDrawer();
+    await Promise.all([loadGroups(), loadJobs(), loadLists()]);
+    renderNumberSwitch(); await refreshStatus();
+    if (S.view === 'compose' && !S.compose?.id) location.hash = 'today'; else route();
+  }
+  $('#number-select').addEventListener('change', e => viewNumber(e.target.value));
   async function loadGroups() {
-    try { const r = await api('groups'); S.groups = r.groups; S.sync = r.sync; } catch { /* keep old */ }
+    try { const r = await api('groups' + qPhone('?')); S.groups = r.groups; S.sync = r.sync; } catch { /* keep old */ }
     clearTimeout(S.syncPoll);
     if (S.sync?.running) S.syncPoll = setTimeout(async () => { await loadGroups(); if (S.view === 'compose') renderPicker(); if (S.view === 'whatsapp') renderSyncDetail(); }, 4000);
   }
   async function loadJobs() {
     try {
-      const [u, p] = await Promise.all([api('jobs?view=upcoming'), api('jobs?view=history')]);
+      const [u, p] = await Promise.all([api('jobs?view=upcoming' + qPhone('&')), api('jobs?view=history' + qPhone('&'))]);
       S.upcoming = u.jobs; S.past = p.jobs;
     } catch { return; }
     $('#count-scheduled').textContent = S.upcoming.length || '';
     const failed = S.past.filter(j => j.status === 'done_with_errors' && Date.now() - j.updatedAt < 7 * DAY).length;
     $('#count-failed').textContent = failed || '';
   }
-  async function loadLists() { try { S.lists = (await api('lists')).lists; } catch { /* keep */ } }
+  async function loadLists() { try { S.lists = (await api('lists' + qPhone('?'))).lists; } catch { /* keep */ } }
   async function loadTemplates() { try { S.templates = (await api('templates')).templates; } catch { /* keep */ } }
   const findJob = id => S.upcoming.find(j => j.id === id) || S.past.find(j => j.id === id);
   const pacingLabel = j => `${dur(j.gapMin)}–${dur(j.gapMax)} between groups`;
@@ -284,7 +321,7 @@
     const list = againCandidates();
     $('#again-strip').innerHTML = list.length ? `<section class="again"><h2>Send these again?</h2>${list.map(j => `<div class="again-row"><span><b>${esc(jobName(j))}</b><small>${plural(j.groups.length, 'group')} · last sent ${esc(shortDate(j.runAt))}, ${ist(j.runAt).time}</small></span><a class="btn btn-ghost btn-sm" href="#compose?again=${j.id}">Repeat ${esc(shortDate(nextWeekOf(j)))}</a></div>`).join('')}</section>` : '';
   }
-  async function loadSendsQuiet() { try { S.sends = (await api('sends')).sends; } catch { /* keep */ } }
+  async function loadSendsQuiet() { try { S.sends = (await api('sends' + qPhone('?'))).sends; } catch { /* keep */ } }
   async function undoJob(id) {
     try {
       const r = await api(`jobs/${id}/undo`, { method: 'POST' });
@@ -566,6 +603,7 @@
   // ============ Group lists ============
   async function renderLists() {
     await Promise.all([loadLists(), loadGroups()]);
+    $('#list-new').classList.toggle('hidden', viewingAway());   // lists are made on the linked number
     $('#lists-list').innerHTML = S.lists.length ? S.lists.map(l => `<article class="card"><h3>${esc(l.name)}</h3>
       <span class="meta">${plural(l.groups.length, 'group')}${l.missing ? ` · ${l.missing} no longer available` : ''}</span>
       <div class="tags">${l.groups.slice().sort(byName).slice(0, 8).map(g => `<span class="tag">${esc(g.name)}</span>`).join('')}${l.groups.length > 8 ? `<span class="tag">+${l.groups.length - 8} more</span>` : ''}</div>
@@ -615,8 +653,11 @@
   }
   async function openCompose() {
     S.composeQuery = location.hash.includes('?') ? '?' + location.hash.split('?')[1] : '';
+    const p = S.params;
+    // New messages (and copies) go from the number in use; editing keeps the message's own number.
+    if (!p.edit && viewingAway()) { S.viewPhone = null; renderNumberSwitch(); refreshStatus(); }
     await Promise.all([loadGroups(), loadLists()]);
-    const p = S.params; let c = blankCompose(); let note = '';
+    let c = blankCompose(); let note = '';
     const fromJob = id => findJob(Number(id));
     if (p.edit || p.dup || p.again) {
       const j = fromJob(p.edit || p.dup || p.again);
@@ -649,7 +690,8 @@
     }
     S.compose = c;
     $('#compose-title').textContent = p.rest ? 'Send the rest' : { new: 'New message', edit: 'Edit message', dup: 'Duplicate message', again: 'Repeat from last week' }[c.mode];
-    $('#compose-lede').textContent = c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.';
+    const from = S.numbers.length > 1 ? ` Sends from ${fmtPhone(S.viewPhone || linkedPhone())}.` : '';
+    $('#compose-lede').textContent = (c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.') + from;
     $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
     $('#job-error').textContent = '';
     $('#group-search').value = '';
@@ -1024,16 +1066,26 @@
 
   // ============ WhatsApp (admin) ============
   async function renderWhatsapp() {
+    if (viewingAway()) { S.viewPhone = null; renderNumberSwitch(); await Promise.all([loadJobs(), loadLists()]); }   // this page is about the linked number
     await Promise.all([refreshStatus(), loadGroups()]);
     const s = S.status.wa;
     const ready = s.status === 'ready';
-    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp engine is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? '+' + esc(s.phone) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
+    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp engine is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? esc(fmtPhone(s.phone)) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
     $('#wa-connect').classList.toggle('hidden', ready);
     $('#wa-logout').classList.toggle('hidden', !ready);
     $('#qr-wrap').classList.add('hidden');
     if (!ready && s.status === 'qr_ready') pollQr();
     renderSyncDetail();
+    await loadNumbers();
+    $('#numbers-panel').classList.toggle('hidden', S.numbers.length < 2);
+    $('#numbers-list').innerHTML = S.numbers.map(n => `<div class="num-row"><span class="dot ${n.current && ready ? 'ok' : 'warn'}"></span>
+      <span class="grow"><b>${esc(fmtPhone(n.phone))}${n.name ? ' · ' + esc(n.name) : ''}</b><small>${n.current ? (ready ? 'Linked now' : 'In use, not connected') : `Last linked ${esc(shortDate(n.lastLinkedAt))}`} · ${plural(n.groups, 'group')} · ${n.upcoming ? `${plural(n.upcoming, 'scheduled message')}${n.current ? '' : ' waiting'}` : 'nothing scheduled'}</small></span>
+      ${n.current ? '' : `<button class="btn btn-ghost btn-sm" type="button" data-view-number="${esc(n.phone)}">View</button>`}</div>`).join('');
   }
+  $('#numbers-list').addEventListener('click', e => {
+    const b = e.target.closest('[data-view-number]'); if (!b) return;
+    viewNumber(b.dataset.viewNumber).then(() => { location.hash = 'scheduled'; });
+  });
   function renderSyncDetail() {
     const s = S.sync; if (!s) return;
     const ready = S.status?.wa?.status === 'ready';
@@ -1042,7 +1094,7 @@
     el.textContent = !ready && !s.saved ? 'Link a number first. Its groups are synced a minute after it connects.'
       : s.running ? 'Syncing every group on this number… Large accounts can take a minute or two.'
       : s.error ? s.error
-      : s.finishedAt ? `${plural(s.saved, 'group')} saved${s.phone ? ` from +${s.phone}` : ''}. Last synced ${ago(s.finishedAt)}.`
+      : s.finishedAt ? `${plural(s.saved, 'group')} saved${s.phone ? ` from ${fmtPhone(s.phone)}` : ''}. Last synced ${ago(s.finishedAt)}.`
       : 'Getting this number’s groups. They appear here a minute after it connects.';
     $('#wa-sync').disabled = !!s.running || !ready;
     $('#wa-sync').textContent = s.running ? 'Syncing…' : 'Sync groups now';

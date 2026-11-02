@@ -21,9 +21,9 @@
 
 <p align="center">
   <a href="https://github.com/Future005/wa-box/actions/workflows/ci.yml"><img src="https://github.com/Future005/wa-box/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.1.0"></a>
+  <a href="CHANGELOG.md"><img src="docs/badges/version.svg" alt="version 1.2.0"></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="MIT license"></a>
-  <img src="docs/badges/tests.svg" alt="93 tests passing">
+  <img src="docs/badges/tests.svg" alt="94 tests passing">
   <img src="docs/badges/node.svg" alt="Node 22 LTS">
   <img src="docs/badges/express.svg" alt="Express 5">
   <img src="docs/badges/sqlite.svg" alt="SQLite">
@@ -92,6 +92,7 @@ WA Box is a small web app your whole team can use:
 - Lists remember when you usually send them ("usually Saturday 09:30, gentle pacing").
 - Quiet-hours warning, so nothing lands at 2 AM by accident.
 - 30-second undo on everything you schedule, including from the API.
+- More than one number? Each one keeps its own groups, lists, schedule and history, like separate email accounts. Switch numbers and nothing is lost; link the old one again and its waiting messages go out.
 - Plans changed? Every upcoming message has **Reschedule** and **Abort** right on it. Abort just this week of a weekly one, or abort mid-send and **change the rest**. An abort always wins, even a second before a group gets it.
 - "Send these again?": last week's messages offered back to you on Today.
 
@@ -144,7 +145,7 @@ like a careful person, and make mistakes very hard:
 | Sending too fast | Random gaps between groups (30 s minimum, enforced on the server), typing indicator, start-time jitter |
 | Sending too much | Daily cap (default 30) and hourly cap (default 20), editable by admins only |
 | Sending the same thing twice | Write-ahead send log, chat-history check before any retry, duplicate guard across messages |
-| Sending to the wrong chat | Groups only (no personal chats), and only groups synced from the linked number (switch numbers and the old number's groups disappear) |
+| Sending to the wrong chat | Groups only (no personal chats), and only groups synced from the linked number. Each number keeps its own groups and messages; only the linked one sends |
 | Something going wrong at 7 AM on a Saturday | Alerts, morning check-in, uptime monitor endpoint, circuit breaker |
 | Getting it wrong while trying it out | Practice mode on by default; local copies always start in practice mode |
 
@@ -267,7 +268,7 @@ The [user guide](docs/USER-GUIDE.md) covers everything, with pictures. In short:
 - **`app/`, the WA Box app**: Node.js 22, Express, SQLite. Serves the web app and the public API, runs the scheduler, keeps every record. The only public service.
 - **`engine/`, the WhatsApp engine**: a small private service around [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js) running real WhatsApp Web in headless Chrome. Keeps the login, reconnects, restarts Chrome when it misbehaves or grows too big, and falls back to the last WhatsApp Web version that worked. No domain, no published port, API key on every call.
 - **The contract between them**: a `4xx` from the engine means *definitely not sent*. Anything else (timeouts, 5xx, dropped connections) means *maybe sent*, and the app checks the group's chat before doing anything. Both sides have tests for this.
-- **Evals in the build**: the Docker build runs the full test suite (93 tests acting out real failures: last-minute aborts, switching numbers, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
+- **Evals in the build**: the Docker build runs the full test suite (94 tests acting out real failures: last-minute aborts, switching numbers and back, lost replies, crashes mid-send, duplicate jobs, missed weeks, limits, a second copy during a redeploy…). If one fails, the image isn't built and the running version stays up.
 
 ### WA Box or a WhatsApp gateway?
 

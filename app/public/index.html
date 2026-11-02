@@ -50,6 +50,9 @@
     <aside class="rail" id="rail">
       <div class="rail-top">
         <div class="mark-row"><span class="mark" aria-hidden="true"></span><span class="wordmark">WA Box</span><span class="org" id="org-label">{{ORG}}</span></div>
+        <label class="numsw hidden" id="numsw"><span>Number</span>
+          <select id="number-select" aria-label="Which WhatsApp number you're looking at"></select>
+        </label>
         <a class="btn btn-primary btn-block new-btn" href="#compose"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New message</a>
         <nav class="nav" aria-label="Main">
           <a href="#today" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"/></svg>Today</a>
@@ -320,6 +323,11 @@
             <div class="btn-row">
               <button class="btn btn-primary" type="button" id="wa-sync">Sync groups now</button>
             </div>
+          </div>
+          <div class="panel hidden" id="numbers-panel">
+            <h2 class="panel-title">All numbers</h2>
+            <p class="hint">Every number that has been linked keeps its own groups, lists, messages and history, like separate email accounts. Only the linked number sends. Link an older number again and its waiting messages go out.</p>
+            <div class="num-list" id="numbers-list"></div>
           </div>
         </div>
       </section>

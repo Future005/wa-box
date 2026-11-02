@@ -93,7 +93,7 @@ app/                       WA Box app (Node 22, Express 5, better-sqlite3, vanil
   src/apikeys.js           API keys (hashed) + idempotency
   src/hooks.js             Outgoing webhooks: queue, signing, retries
   src/alerts.js            Alerts, check-in, done notes
-  src/groups.js            Saved groups (all groups on the linked number; reset when the number changes), group lists
+  src/groups.js            Number profiles: numbers, their saved groups (synced from WhatsApp) and group lists
   src/auth.js              Users, sessions, passwords
   src/render.js            {group} {day} {date} (same as public/lib.js)
   src/time.js              India-time helpers

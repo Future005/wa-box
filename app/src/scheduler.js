@@ -64,8 +64,10 @@ function settings() {
   };
 }
 
-const sentToday = () => db.prepare("SELECT COUNT(*) n FROM sends WHERE day_key=? AND status IN ('sent','sending','uncertain')").get(istDayKey()).n;
-const sentLastHour = () => db.prepare("SELECT COUNT(*) n, MIN(attempt_at) first FROM sends WHERE attempt_at > ? AND status IN ('sent','sending','uncertain')").get(Date.now() - 3600 * 1000);
+// Limits are per number: each WhatsApp account has its own daily and hourly budget.
+const cur = () => savedGroups.current() || null;
+const sentToday = () => db.prepare("SELECT COUNT(*) n FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.day_key=? AND s.status IN ('sent','sending','uncertain')").get(cur(), istDayKey()).n;
+const sentLastHour = () => db.prepare("SELECT COUNT(*) n, MIN(s.attempt_at) first FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.attempt_at > ? AND s.status IN ('sent','sending','uncertain')").get(cur(), Date.now() - 3600 * 1000);
 
 // ---------- lease ----------
 function acquireLease() {
@@ -104,7 +106,7 @@ async function refreshWa() {
     if (!state.readySince) state.readySince = Date.now();
     // Groups follow the linked number: a new number hides the old one's groups at once, then
     // syncs (after a minute, so WhatsApp Web has loaded the chats), retries, and refreshes.
-    savedGroups.keepInStep(String(state.wa.phone || '').replace(/\D/g, ''), { canSync: Date.now() - state.readySince > (FAST ? 0 : 60 * 1000) });
+    savedGroups.keepInStep(String(state.wa.phone || '').replace(/\D/g, ''), { name: state.wa.pushName || '', canSync: Date.now() - state.readySince >= (FAST ? 0 : 60 * 1000) });
     await alerts.clear('wa_down', 'WhatsApp is connected again. Scheduled messages will go out.', { waReady: true });
   } else {
     state.readySince = 0;
@@ -408,13 +410,13 @@ async function maybeDigest(ready) {
   const t = epochToIst(Date.now());
   if (t.time < '08:30' || t.time > '10:00') return;
   const start = Date.now(), end = nextIstMidnight();
-  const jobs = db.prepare("SELECT groups_json FROM jobs WHERE status IN ('scheduled','running') AND start_at < ?").all(end);
+  const jobs = db.prepare("SELECT groups_json FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND start_at < ?").all(cur(), end);
   const groups = jobs.reduce((n, j) => n + JSON.parse(j.groups_json).length, 0);
   const fails = db.prepare("SELECT COUNT(*) n FROM sends WHERE status IN ('failed','unconfirmed','missed') AND COALESCE(sent_at, attempt_at, occurrence) > ?").get(start - 24 * 3600 * 1000).n;
   const cfg = settings();
   const lines = [];
   if (t.dow === 1) {   // Monday: the week ahead
-    const week = db.prepare("SELECT message, groups_json, run_at FROM jobs WHERE status IN ('scheduled','running') AND run_at < ? ORDER BY run_at").all(start + 7 * 86400000);
+    const week = db.prepare("SELECT message, groups_json, run_at FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND run_at < ? ORDER BY run_at").all(cur(), start + 7 * 86400000);
     lines.push('', `This week (${week.length}):`, ...(week.length ? week.map(j => `• ${formatIst(j.run_at)} · ${firstLine(j.message)} · ${JSON.parse(j.groups_json).length} groups`) : ['• Nothing scheduled yet']));
   }
   const summary = [
@@ -559,7 +561,12 @@ async function tick() {
     await maybeDigest(ready).catch(e => logEvent('warn', 'digest', e.message));
     const cfg = settings();
     const now = Date.now();
-    const due = db.prepare("SELECT * FROM jobs WHERE status IN ('scheduled','running') AND start_at <= ? ORDER BY start_at, id LIMIT 1").get(now);
+    // A number that isn't linked keeps its messages waiting. Past the late limit they can't go out
+    // on time any more, so they're marked missed (a weekly one carries on next week) with the reason.
+    for (const j of db.prepare("SELECT * FROM jobs WHERE phone IS NOT ? AND status IN ('scheduled','running') AND start_at <= ?").all(cur(), now - cfg.maxLateMin * 60000)) {
+      markMissed(j, `+${j.phone || '?'} wasn't the linked number at that time`);
+    }
+    const due = db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND start_at <= ? ORDER BY start_at, id LIMIT 1").get(cur(), now);
     if (!due) return;
     if (now - due.start_at > cfg.maxLateMin * 60000) {
       markMissed(due, `more than ${cfg.maxLateMin} min late (the server or WhatsApp was offline)`);
@@ -657,7 +664,7 @@ function sendAgain(jobId, groupId, by) {
 function health() {
   const now = Date.now();
   const cfg = settings();
-  const next = db.prepare("SELECT id, start_at FROM jobs WHERE status IN ('scheduled','running') ORDER BY start_at LIMIT 1").get();
+  const next = db.prepare("SELECT id, start_at FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at LIMIT 1").get(cur());
   const day = 24 * 3600 * 1000;
   const fail24 = db.prepare("SELECT COUNT(*) n FROM sends WHERE status IN ('failed','unconfirmed','missed') AND COALESCE(sent_at, attempt_at, occurrence) > ?").get(now - day).n;
   const sent24 = db.prepare("SELECT COUNT(*) n FROM sends WHERE status='sent' AND sent_at > ?").get(now - day).n;

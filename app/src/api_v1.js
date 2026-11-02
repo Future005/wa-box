@@ -165,8 +165,8 @@ router.get('/messages', wrap(async (req, res) => {
   const view = req.query.status === 'history' ? 'history' : 'upcoming';
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
   const rows = view === 'upcoming'
-    ? db.prepare("SELECT * FROM jobs WHERE status IN ('scheduled','running') ORDER BY start_at LIMIT ?").all(limit * 2)
-    : db.prepare("SELECT * FROM jobs WHERE status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT ?").all(limit * 2);
+    ? db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at LIMIT ?").all(savedGroups.current() || null, limit * 2)
+    : db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT ?").all(savedGroups.current() || null, limit * 2);
   const allowed = keys.allowedGroupIds(req.key);
   const mine = rows.filter(j => !allowed || JSON.parse(j.groups_json).every(g => allowed.has(g.id))).slice(0, limit);
   res.json({ messages: mine.map(publicMessage) });
@@ -218,7 +218,7 @@ router.patch('/messages/:id', need('schedule'), wrap(async (req, res) => {
     pacing: b.pacing ?? { minSeconds: j.gap_min, maxSeconds: j.gap_max },
     imageUrl: b.imageUrl !== undefined ? b.imageUrl : j.media_url, linkPreview: b.linkPreview ?? j.link_preview !== 0,
   };
-  const v = await validateJobInput(toFormBody(merged, req.key));
+  const v = await validateJobInput(toFormBody(merged, req.key), { phone: j.phone || undefined });
   const now = Date.now();
   const r = db.prepare(`UPDATE jobs SET title=?, message=?, media_url=?, link_preview=?, groups_json=?, time_ist=?, run_at=?, start_at=?, gap_min=?, gap_max=?, repeat_days=?,
     note='', updated_by=?, updated_at=? WHERE id=? AND status='scheduled'

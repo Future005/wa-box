@@ -178,7 +178,18 @@ If three sends fail in a row, WA Box pauses all sending and tells the admins. Th
 2. On the phone: WhatsApp → Settings → **Linked devices** → **Link a device** → scan.
 3. Every group on the number syncs by itself about a minute later. Nothing is filtered out; the group picker has search.
 4. New groups show up every few hours on their own, or press **Sync groups now**.
-5. **Changing the number?** Unlink it (or link a different phone). The old number's groups disappear right away and the new number's groups sync in. If scheduled messages went to the old number's groups, WA Box warns you so you can pick groups again.
+5. **Changing the number?** Unlink it and link the other phone. See [More than one number](#more-than-one-number).
+
+### More than one number
+
+WA Box keeps every number that has ever been linked, like separate email accounts. Each number has its own groups, group lists, scheduled messages and history.
+
+- **Only the linked number sends.** When you link a different number, the previous one's scheduled messages are kept and **wait**. Nothing is deleted.
+- **Switch the view** with the **Number** menu at the top left (it appears once a second number has been linked). Looking at a number that isn't linked shows its waiting messages, history and lists. You can abort or reschedule its messages there.
+- **Link it again later** and everything comes back: its groups, its lists, and its waiting messages go out.
+- If a waiting message's time passes by more than the late limit (*Safety & settings*, default 2 hours) while its number isn't linked, it's marked **missed** with the reason. A weekly message carries on the next week.
+- New messages always go from the linked number. **All numbers** in *WhatsApp & groups* lists each one with what's waiting on it.
+- Daily and hourly limits count per number.
 
 Open WhatsApp on that phone at least once a week; linked devices log out after about 14 days
 without the phone. Use a number that has been active for a while.

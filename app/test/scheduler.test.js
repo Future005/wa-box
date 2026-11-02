@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
     if (u.pathname === '/status') return j(200, { status: gw.status, phone: gw.phone, pushName: 'Test' });
     if (u.pathname === '/typing') { const b = JSON.parse(body); if (b.state === 'typing' && gw.onTyping) gw.onTyping(b.chatId); return j(200, { ok: true }); }
     if (u.pathname === '/receipts') { const ids = JSON.parse(body).ids; return j(200, Object.fromEntries(ids.map(id => [id, gw.acks[id] ?? 1]))); }
-    if (u.pathname === '/groups') return j(200, gw.waGroups ?? db.prepare('SELECT id, name FROM wa_groups').all());   // default: the phone has the groups the test added
+    if (u.pathname === '/groups') return j(200, gw.waGroups ?? db.prepare("SELECT id, name FROM number_groups WHERE phone='919000000000'").all());   // default: the phone has the groups the test added
     if (u.pathname === '/history') {
       const chat = u.searchParams.get('chatId');
       return j(200, gw.delivered.filter(d => d.chatId === chat).map(d => ({ id: d.id, body: d.text, fromMe: true, timestamp: Math.floor(d.at / 1000) })));
@@ -60,13 +60,13 @@ const sentTo = chat => gw.delivered.filter(d => d.chatId === chat).length;
 const G = n => ({ id: `${n}@g.us`, name: `Group ${n}` });
 
 function addGroups(...ns) {
-  for (const n of ns) db.prepare('INSERT OR REPLACE INTO wa_groups(id,name,active,updated_at) VALUES(?,?,1,?)').run(G(n).id, G(n).name, Date.now());
+  for (const n of ns) db.prepare("INSERT OR REPLACE INTO number_groups(phone,id,name,active,updated_at) VALUES('919000000000',?,?,1,?)").run(G(n).id, G(n).name, Date.now());
 }
-function addJob({ groups, message = 'Hello *team* 🎉', runAt = Date.now(), startAt, repeat = [], gap = 30, timeIst, mediaUrl = null, mediaFile = null, linkPreview = 1 } = {}) {
+function addJob({ groups, message = 'Hello *team* 🎉', runAt = Date.now(), startAt, repeat = [], gap = 30, timeIst, mediaUrl = null, mediaFile = null, linkPreview = 1, phone = '919000000000' } = {}) {
   const t = time.epochToIst(runAt).time;
-  return db.prepare(`INSERT INTO jobs(title,message,groups_json,time_ist,run_at,start_at,gap_min,gap_max,repeat_days,status,created_by,updated_by,created_at,updated_at,media_url,media_file,media_mime,link_preview)
-    VALUES('',?,?,?,?,?,?,?,?,'scheduled','test','test',?,?,?,?,?,?)`).run(message, JSON.stringify(groups.map(G)), timeIst || t, runAt, startAt ?? runAt, gap, gap,
-    JSON.stringify(repeat), Date.now(), Date.now(), mediaUrl, mediaFile, mediaFile ? 'image/png' : null, linkPreview).lastInsertRowid;
+  return db.prepare(`INSERT INTO jobs(title,message,groups_json,time_ist,run_at,start_at,gap_min,gap_max,repeat_days,status,created_by,updated_by,created_at,updated_at,media_url,media_file,media_mime,link_preview,phone)
+    VALUES('',?,?,?,?,?,?,?,?,'scheduled','test','test',?,?,?,?,?,?,?)`).run(message, JSON.stringify(groups.map(G)), timeIst || t, runAt, startAt ?? runAt, gap, gap,
+    JSON.stringify(repeat), Date.now(), Date.now(), mediaUrl, mediaFile, mediaFile ? 'image/png' : null, linkPreview, phone).lastInsertRowid;
 }
 const job = id => db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
 const sends = id => db.prepare('SELECT * FROM sends WHERE job_id=? ORDER BY id').all(id);
@@ -87,7 +87,7 @@ before(async () => {
 });
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
-  for (const t of ['sends', 'jobs', 'wa_groups', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
+  for (const t of ['sends', 'jobs', 'number_groups', 'numbers', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
   Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null });
   setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('groups_phone', '919000000000');   // the test groups belong to the fake engine's number
@@ -573,72 +573,95 @@ test('cancelling something that already finished is refused clearly', async () =
   assert.throws(() => sched.cancelJob(Number(id), 'tester'), /not waiting/);
 });
 
-// ---------- groups follow the linked number ----------
+// ---------- number profiles: each number keeps its own groups, lists and messages ----------
 const groupsMod = () => require('../src/groups');
 async function syncDone() { for (let i = 0; i < 100 && groupsMod().status().running; i++) await new Promise(r => setTimeout(r, 20)); }
+const A = '919000000000', B = '918888888888';
+async function link(phone, groupsOnPhone) {
+  gw.phone = phone; gw.waGroups = groupsOnPhone; groupsMod()._resetGap();
+  await sched.tick(); await syncDone();
+}
 
 test('every group on the number is saved: nothing is filtered out by name', async () => {
   setSetting('group_keywords', ['Cohort']);   // an old keyword setting must not hide anything
-  gw.waGroups = [{ id: 'a@g.us', name: 'Weekend Cohort 1' }, { id: 'b@g.us', name: 'Family' }, { id: 'c@g.us', name: 'Mentors Lounge' }];
-  groupsMod().forgetNumber('919000000000');
-  groupsMod().startSync('tester', '919000000000'); await syncDone();
+  await link(A, [{ id: 'a@g.us', name: 'Weekend Cohort 1' }, { id: 'b@g.us', name: 'Family' }, { id: 'c@g.us', name: 'Mentors Lounge' }]);
   assert.deepEqual(groupsMod().list().map(g => g.name), ['Family', 'Mentors Lounge', 'Weekend Cohort 1']);
 });
 
-test('a different number is linked: the old number\'s groups disappear at once, the new ones sync in', async () => {
-  gw.waGroups = [{ id: 'old1@g.us', name: 'Old batch' }];
-  groupsMod().forgetNumber('919000000000');
-  groupsMod().startSync('tester', '919000000000'); await syncDone();
-  assert.equal(groupsMod().list().length, 1);
-  gw.phone = '918888888888'; gw.waGroups = [{ id: 'new1@g.us', name: 'New batch 1' }, { id: 'new2@g.us', name: 'New batch 2' }];
-  const id = addJob({ groups: [], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3 });
-  db.prepare('UPDATE jobs SET groups_json=? WHERE id=?').run(JSON.stringify([{ id: 'old1@g.us', name: 'Old batch' }]), id);
-  await sched.tick();
-  assert.ok(!groupsMod().list().some(g => g.id === 'old1@g.us'), 'old number\'s groups are hidden straight away');
-  await syncDone(); await sched.tick(); await syncDone();
-  assert.deepEqual(groupsMod().list().map(g => g.id), ['new1@g.us', 'new2@g.us']);
-  assert.equal(groupsMod().status().phone, '918888888888');
-  const issue = db.prepare("SELECT message FROM alert_log WHERE key='groups_missing' AND open=1").get();
-  assert.match(issue.message, /1 scheduled message goes to groups that aren't on the linked number/);
+test('switch to another number and back: nothing is lost, the first number\'s message waits and then goes out', async () => {
+  await link(A, [{ id: 'a1@g.us', name: 'A batch' }]);
+  const id = addJob({ groups: [], runAt: Date.now() + 2000, startAt: Date.now() + 2000, phone: A });
+  db.prepare('UPDATE jobs SET groups_json=? WHERE id=?').run(JSON.stringify([{ id: 'a1@g.us', name: 'A batch' }]), id);
+  groupsMod().saveList({ name: 'A list', groupIds: ['a1@g.us'] }, 't');
+
+  await link(B, [{ id: 'b1@g.us', name: 'B batch' }]);
+  assert.equal(groupsMod().current(), B);
+  assert.deepEqual(groupsMod().list().map(g => g.id), ['b1@g.us'], 'only the linked number\'s groups are offered');
+  assert.deepEqual(groupsMod().lists().map(l => l.name), [], 'lists belong to their number');
+  assert.deepEqual(groupsMod().list(A).map(g => g.id), ['a1@g.us'], 'A\'s groups are kept');
+  assert.match(db.prepare("SELECT message FROM alert_log WHERE key=? AND open=1").get(`number_waiting:${A}`).message, /1 scheduled message is waiting for \+919000000000/);
+
+  await new Promise(r => setTimeout(r, 2100));
+  await runUntilIdle(5);
+  assert.equal(gw.delivered.length, 0, 'A\'s message does not go out from B');
+  assert.equal(job(id).status, 'scheduled', 'it waits (not skipped)');
+
+  await link(A, [{ id: 'a1@g.us', name: 'A batch' }]);
+  assert.deepEqual(groupsMod().lists().map(l => l.name), ['A list'], 'A\'s lists are back');
+  await runUntilIdle();
+  assert.equal(sentTo('a1@g.us'), 1, 'and its waiting message goes out');
+  assert.equal(db.prepare("SELECT open FROM alert_log WHERE key=?").get(`number_waiting:${A}`).open, 0);
+  assert.deepEqual(groupsMod().numbers().map(n => n.phone).sort(), [B, A].sort());
 });
 
-test('unlinking the number hides its groups', async () => {
-  gw.waGroups = [{ id: 'x@g.us', name: 'X' }];
-  groupsMod().forgetNumber('919000000000');
-  groupsMod().startSync('tester', '919000000000'); await syncDone();
+test('a number that stays unlinked past the late limit: its one-off is marked missed with the reason; a weekly one carries on', async () => {
+  await link(A, [{ id: 'a1@g.us', name: 'A batch' }]);
+  setSetting('max_late_min', 1);
+  const late = Date.now() - 5 * 60000;
+  const one = addJob({ groups: [], runAt: late, startAt: late, phone: B });
+  const wk = addJob({ groups: [], runAt: late, startAt: late, phone: B, repeat: [0, 1, 2, 3, 4, 5, 6] });
+  for (const id of [one, wk]) db.prepare('UPDATE jobs SET groups_json=? WHERE id=?').run(JSON.stringify([{ id: 'b1@g.us', name: 'B batch' }]), id);
+  await sched.tick();
+  assert.match(sends(one)[0].error, /\+918888888888 wasn't the linked number/);
+  assert.notEqual(job(one).status, 'scheduled');
+  assert.equal(job(wk).status, 'scheduled');
+  assert.ok(job(wk).run_at > Date.now(), 'weekly moved on to its next time');
+  assert.equal(gw.delivered.length, 0);
+  setSetting('max_late_min', 120);
+});
+
+test('unlinking keeps the number\'s groups and messages (it is shown as not linked)', async () => {
+  await link(A, [{ id: 'x@g.us', name: 'X' }]);
+  gw.status = 'qr_ready';
+  await sched.tick();
+  assert.equal(groupsMod().current(), A);
   assert.equal(groupsMod().list().length, 1);
-  groupsMod().forgetNumber('', 'admin');
-  assert.equal(groupsMod().list().length, 0);
 });
 
 test('a group missing from one read stays (WhatsApp may still be loading); missing twice, it goes', async () => {
-  gw.waGroups = [{ id: 'p@g.us', name: 'P' }, { id: 'q@g.us', name: 'Q' }];
-  groupsMod().forgetNumber('919000000000');
-  groupsMod().startSync('t', '919000000000'); await syncDone();
+  const st = groupsMod();
+  await link(A, [{ id: 'p@g.us', name: 'P' }, { id: 'q@g.us', name: 'Q' }]);
   gw.waGroups = [{ id: 'p@g.us', name: 'P' }];
-  const st = require('../src/groups');
-  st._resetGap(); st.startSync('t', '919000000000'); await syncDone();
+  st._resetGap(); st.startSync('t'); await syncDone();
   assert.deepEqual(st.list().map(g => g.id), ['p@g.us', 'q@g.us'], 'still offered after one miss');
-  st._resetGap(); st.startSync('t', '919000000000'); await syncDone();
+  st._resetGap(); st.startSync('t'); await syncDone();
   assert.deepEqual(st.list().map(g => g.id), ['p@g.us']);
 });
 
 test('pressing Sync twice quickly is harmless (no error), and a sync that fails says what happens next', async () => {
   const st = groupsMod();
-  st.forgetNumber('919000000000');
-  assert.equal(st.startSync('t', '919000000000'), null);
-  assert.equal(st.startSync('t', '919000000000'), null);
+  await link(A, [{ id: 'p@g.us', name: 'P' }]);
+  assert.equal(st.startSync('t'), null);
+  assert.equal(st.startSync('t'), null);
   await syncDone();
   gw.waGroups = 'boom';   // the engine returns something broken
-  st._resetGap(); st.startSync('t', '919000000000'); await syncDone();
+  st._resetGap(); st.startSync('t'); await syncDone();
   assert.match(st.status().error, /tries again by itself/);
 });
 
-test('upgrade: groups saved before numbers were tracked are cleared and synced fresh from the linked number', async () => {
-  addGroups(70, 71);                       // an older version's groups, from whichever number was linked then
+test('upgrade: messages made before numbers were tracked belong to the first number that links', async () => {
   setSetting('groups_phone', '');
-  gw.waGroups = [{ id: 'fresh@g.us', name: 'Fresh' }];
-  groupsMod()._resetGap();
-  await sched.tick(); await syncDone();
-  assert.deepEqual(groupsMod().list().map(g => g.id), ['fresh@g.us']);
+  const id = addJob({ groups: [1], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3, phone: null });
+  await link(A, [{ id: '1@g.us', name: 'Group 1' }]);
+  assert.equal(job(id).phone, A);
 });

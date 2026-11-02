@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WA Box API
-  version: 1.1.0
+  version: 1.2.0
   summary: Schedule WhatsApp group messages with the same safety rules as the WA Box app.
   description: |
     Everything scheduled through the API goes through exactly the same checks as the app:

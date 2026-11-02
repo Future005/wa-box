@@ -37,12 +37,13 @@ before(async () => {
 });
 after(() => { srv.close(); receiver.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
-  for (const t of ['jobs', 'sends', 'wa_groups', 'group_lists', 'api_keys', 'idempotency', 'webhooks', 'hook_deliveries', 'alert_log']) db.exec(`DELETE FROM ${t}`);
+  for (const t of ['jobs', 'sends', 'number_groups', 'numbers', 'group_lists', 'api_keys', 'idempotency', 'webhooks', 'hook_deliveries', 'alert_log']) db.exec(`DELETE FROM ${t}`);
   const now = Date.now();
   for (const [id, name] of [['1@g.us', 'Weekend Cohort 1'], ['2@g.us', 'Weekend Cohort 2'], ['3@g.us', 'Masterclass Nov']]) {
-    db.prepare('INSERT INTO wa_groups(id,name,active,updated_at) VALUES(?,?,1,?)').run(id, name, now);
+    db.prepare("INSERT INTO number_groups(phone,id,name,active,updated_at) VALUES('919000000000',?,?,1,?)").run(id, name, now);
   }
-  db.prepare("INSERT INTO group_lists(id,name,group_ids,created_by,updated_at) VALUES(1,'Weekend','[\"1@g.us\",\"2@g.us\"]','t',?)").run(now);
+  db.prepare("INSERT INTO group_lists(id,name,group_ids,created_by,updated_at,phone) VALUES(1,'Weekend','[\"1@g.us\",\"2@g.us\"]','t',?,'919000000000')").run(now);
+  require('../src/db').setSetting('groups_phone', '919000000000');
   received.length = 0; receiverMode = 'ok';
 });
 

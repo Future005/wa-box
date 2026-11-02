@@ -137,7 +137,7 @@ api.get('/status', (req, res) => {
     wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, since: s.wa.since || 0, error: req.user.role === 'admin' ? s.wa.error : undefined },
     dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
     quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: LOCAL,
-    sentToday: sched.sentToday(), issues: alerts.openIssues().length,
+    sentToday: sched.sentToday(), issues: alerts.openIssues().length, number: savedGroups.current(), numbers: savedGroups.numbers().length,
     running: running ? { ...running, group: s.currentGroup, nextSendAt: s.nextSendAt } : null,
     now: Date.now(), today: epochToIst(Date.now()).date,
   });
@@ -145,15 +145,18 @@ api.get('/status', (req, res) => {
 
 // ---------- groups ----------
 // Instant: reads the saved list, never asks WhatsApp.
-api.get('/groups', (_req, res) => res.json({ groups: savedGroups.list(), sync: savedGroups.status() }));
+// ?phone= views another number's saved groups (numbers are kept like separate accounts).
+const viewPhone = req => (req.query.phone ? String(req.query.phone).replace(/\D/g, '') : undefined);
+api.get('/groups', (req, res) => res.json({ groups: savedGroups.list(viewPhone(req)), sync: savedGroups.status(viewPhone(req)) }));
+api.get('/numbers', (_req, res) => res.json({ numbers: savedGroups.numbers(), current: savedGroups.current(), linked: sched.state.wa.status === 'ready' }));
 // Background sync from WhatsApp (one read of the chat list WhatsApp Web already has).
 api.post('/groups/sync', wrap(async (req, res) => {
   if (sched.state.wa.status !== 'ready') throw bad('WhatsApp is not connected yet. Link the number first, then sync.');
-  const err = savedGroups.startSync(req.user.username, String(sched.state.wa.phone || '').replace(/\D/g, ''));
+  const err = savedGroups.startSync(req.user.username);
   if (err) throw bad(err);
   res.json({ ok: true, sync: savedGroups.status() });
 }));
-api.get('/lists', (_req, res) => res.json({ lists: savedGroups.lists() }));
+api.get('/lists', (req, res) => res.json({ lists: savedGroups.lists(viewPhone(req)) }));
 api.post('/lists', wrap(async (req, res) => {
   const id = savedGroups.saveList(req.body || {}, req.user.username);
   audit(req.user.username, 'list_saved', String(req.body?.name || ''));
@@ -189,15 +192,17 @@ function saveMedia(file) {
 
 api.get('/jobs', (req, res) => {
   const view = req.query.view === 'history' ? 'history' : 'upcoming';
+  const phone = viewPhone(req) ?? savedGroups.current();
   const rows = view === 'upcoming'
-    ? db.prepare("SELECT * FROM jobs WHERE status IN ('scheduled','running') ORDER BY start_at").all()
-    : db.prepare("SELECT * FROM jobs WHERE status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT 100").all();
+    ? db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at").all(phone || null)
+    : db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT 100").all(phone || null);
   res.json({ jobs: rows.map(serializeJob) });
 });
 
 api.get('/sends', (req, res) => {
-  const rows = db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id
-    ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT 500`).all();
+  const phone = viewPhone(req) ?? savedGroups.current();
+  const rows = db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id WHERE j.phone IS ?
+    ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT 500`).all(phone || null);
   res.json({ sends: rows.map(r => ({ id: r.id, jobId: r.job_id, groupId: r.group_id, title: r.title, preview: r.message.slice(0, 80),
     group: r.group_name, status: r.status, error: r.error, verified: !!r.verified, ack: r.ack, at: r.sent_at || r.attempt_at || r.occurrence })) });
 });
@@ -258,7 +263,7 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   if (job.status !== 'scheduled') throw Object.assign(new Error(job.status === 'running'
     ? 'It started sending, so your changes were not saved. Abort it, or use "Change the rest" to send something else to the groups still waiting.'
     : 'This message is no longer waiting, so it cannot be edited. Duplicate it instead.'), { status: 409 });
-  const v = await validateJobInput(req.body);
+  const v = await validateJobInput(req.body, { phone: job.phone || undefined });   // groups of the number it belongs to
   if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
   let mediaFile = job.media_file, mediaMime = job.media_mime, mediaUrl = job.media_url;
   if (req.body.removeImage === '1') { mediaFile = null; mediaMime = null; mediaUrl = null; }

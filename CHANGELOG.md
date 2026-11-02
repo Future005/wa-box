@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 (3 Nov 2026)
+
+### Number profiles
+- Every number that has been linked keeps its own **groups, group lists, scheduled messages and history**, like separate email accounts. Nothing is deleted when you switch numbers.
+- Only the linked number sends. The previous number's scheduled messages **wait**, with a clear notice; link it again and they go out. Past the late limit they're marked missed with the reason (weekly ones carry on).
+- **Number** menu at the top left to look at another number's messages, history and lists (abort or reschedule its messages there). **All numbers** panel in *WhatsApp & groups*.
+- Daily and hourly limits count per number. New messages always go from the linked number; the compose screen says which.
+- API: `/api/v1` works with the linked number's groups and messages.
+
 ## 1.1.0 (1 Nov 2026)
 
 ### Last-minute changes

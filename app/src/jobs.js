@@ -16,7 +16,7 @@ function serializeJob(j) {
     imagePurged: !!j.media_purged, linkPreview: j.link_preview !== 0,
     groups: JSON.parse(j.groups_json), date, time, runAt: j.run_at, startAt: j.start_at,
     gapMin: j.gap_min, gapMax: j.gap_max, repeatDays: JSON.parse(j.repeat_days),
-    status: j.status, note: j.note, createdBy: j.created_by, updatedBy: j.updated_by,
+    phone: j.phone || '', status: j.status, note: j.note, createdBy: j.created_by, updatedBy: j.updated_by,
     createdAt: j.created_at, updatedAt: j.updated_at, sends,
   };
 }
@@ -49,7 +49,8 @@ async function checkImageUrl(raw) {
   return u;
 }
 
-async function validateJobInput(body, { requireFuture = true } = {}) {
+async function validateJobInput(body, { requireFuture = true, phone } = {}) {
+  if (!(phone ?? savedGroups.current())) throw bad('Link a WhatsApp number first (WhatsApp & groups), then schedule.');
   const message = String(body.message || '').trim();
   if (!message) throw bad('Message is empty');
   if (message.length > 4000) throw bad('Message is too long (max 4000 characters)');
@@ -60,8 +61,8 @@ async function validateJobInput(body, { requireFuture = true } = {}) {
   if (!Array.isArray(groupIds) || !groupIds.length) throw bad('Pick at least one group');
   if (groupIds.length > 50) throw bad('Max 50 groups per job');
   const chosen = [...new Set(groupIds.map(String))].map(id => {
-    const g = savedGroups.get(id);
-    if (!g) throw bad('One of the selected groups is no longer in the saved group list. Sync groups and try again.');
+    const g = savedGroups.get(id, phone);
+    if (!g) throw bad('One of the selected groups is not on this number any more. Sync groups and try again.');
     return { id: g.id, name: g.name };
   });
 
@@ -87,13 +88,13 @@ async function validateJobInput(body, { requireFuture = true } = {}) {
 
 
 /** Insert a validated message. `createdBy` is a person ("asha@example.com") or an API key ("api:Sheets sync"). */
-function createJob(v, { createdBy, media = null }) {
+function createJob(v, { createdBy, media = null, phone = savedGroups.current() }) {
   if (v.imageUrl && media) throw bad('Use either an uploaded image or an image link, not both');
   const now = Date.now();
   const r = db.prepare(`INSERT INTO jobs(title,message,media_file,media_mime,media_url,link_preview,groups_json,time_ist,run_at,start_at,gap_min,gap_max,
-    repeat_days,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?)`)
+    repeat_days,status,created_by,updated_by,created_at,updated_at,phone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?,?,?,?,?)`)
     .run(v.title, v.message, media?.name || null, media?.mime || null, v.imageUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt,
-      Math.max(v.runAt + sched.jitter(), now + UNDO_MS), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), createdBy, createdBy, now, now);
+      Math.max(v.runAt + sched.jitter(), now + UNDO_MS), v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), createdBy, createdBy, now, now, phone);
   savedGroups.rememberUsage(v.chosen.map(g => g.id), { time: v.time, dow: epochToIst(v.runAt).dow, gapMin: v.gapMin, gapMax: v.gapMax, repeat: v.repeatDays });
   audit(createdBy, 'job_created', `#${r.lastInsertRowid} ${v.chosen.length} groups at ${formatIst(v.runAt)}`);
   return Number(r.lastInsertRowid);
