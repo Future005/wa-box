@@ -164,3 +164,20 @@ test('redeploy: a Chrome profile lock left by the old container is removed, a li
   assert.deepEqual(clearStaleChromeLocks(root), [], 'a lock held by a running Chrome on this machine is left alone');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('groups are read straight from the browser: one unreadable chat is skipped, the rest still come back', async () => {
+  const { Engine } = require('../src/engine');
+  const e = new Engine({ ClientImpl: FakeClient, LocalAuthImpl: FakeAuth, chromePath: '/bin/false' });
+  e.status = 'ready';
+  const chats = [
+    { id: { _serialized: '1@g.us' }, formattedTitle: 'Weekend Cohort 1' },
+    { get id() { throw new Error('r'); } },                       // what WhatsApp Web threw after an update
+    { id: { _serialized: '2@g.us' }, name: 'Thu-Fri Batch' },
+    { id: { _serialized: '9@c.us' }, name: 'A person' },          // not a group
+    { id: { _serialized: '3@g.us' }, groupMetadata: { subject: 'Mentors' } },
+  ];
+  e.client = { pupPage: { evaluate: fn => { global.window = { require: () => ({ Chat: { getModelsArray: () => chats } }) }; try { return Promise.resolve(fn()); } finally { delete global.window; } } } };
+  const r = await e.listGroups();
+  assert.deepEqual(r.groups.map(g => g.name), ['Weekend Cohort 1', 'Thu-Fri Batch', 'Mentors']);
+  assert.equal(r.skipped, 1);
+});

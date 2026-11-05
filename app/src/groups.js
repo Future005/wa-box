@@ -137,6 +137,8 @@ async function runSync(by, forPhone) {
     sync.error = /timeout|timed out|aborted/i.test(e.message)
       ? 'WhatsApp is still loading the chats on this number. WA Box tries again by itself in 2 minutes.'
       : /not ready|409|not connected/i.test(e.message) ? 'WhatsApp is not connected yet. Link the number first.'
+      : String(e.message || '').trim().length < 12
+        ? 'WhatsApp Web had a problem reading the chat list. WA Box tries again by itself in 2 minutes.'   // e.g. a bare "r" from inside WhatsApp Web
       : `${e.message}. WA Box tries again by itself in 2 minutes.`;
   } finally {
     sync.running = false;

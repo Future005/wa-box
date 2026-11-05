@@ -33,6 +33,7 @@ const server = http.createServer((req, res) => {
     if (u.pathname === '/status') return j(200, { status: gw.status, phone: gw.phone, pushName: 'Test' });
     if (u.pathname === '/typing') { const b = JSON.parse(body); if (b.state === 'typing' && gw.onTyping) gw.onTyping(b.chatId); return j(200, { ok: true }); }
     if (u.pathname === '/receipts') { const ids = JSON.parse(body).ids; return j(200, Object.fromEntries(ids.map(id => [id, gw.acks[id] ?? 1]))); }
+    if (u.pathname === '/groups' && gw.groupsError) return j(500, { message: gw.groupsError });   // same shape as the real engine
     if (u.pathname === '/groups') return j(200, gw.waGroups ?? db.prepare("SELECT id, name FROM number_groups WHERE phone='919000000000'").all());   // default: the phone has the groups the test added
     if (u.pathname === '/history') {
       const chat = u.searchParams.get('chatId');
@@ -88,7 +89,7 @@ before(async () => {
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
   for (const t of ['sends', 'jobs', 'number_groups', 'numbers', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
-  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null });
+  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null, groupsError: null });
   setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('groups_phone', '919000000000');   // the test groups belong to the fake engine's number
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
@@ -657,6 +658,10 @@ test('pressing Sync twice quickly is harmless (no error), and a sync that fails 
   gw.waGroups = 'boom';   // the engine returns something broken
   st._resetGap(); st.startSync('t'); await syncDone();
   assert.match(st.status().error, /tries again by itself/);
+  gw.groupsError = 'r';   // the engine passes on WhatsApp Web's bare "r"
+  st._resetGap(); st.startSync('t'); await syncDone();
+  assert.equal(st.status().error, 'WhatsApp Web had a problem reading the chat list. WA Box tries again by itself in 2 minutes.');
+  gw.groupsError = null;
 });
 
 test('upgrade: messages made before numbers were tracked belong to the first number that links', async () => {

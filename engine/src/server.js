@@ -55,9 +55,9 @@ function createServer(engine, { apiKey, MessageMediaImpl } = {}) {
       return { qrCode: engine.qrDataUrl, status: engine.status };
     },
     'GET /groups': async () => {
-      const c = engine.ready();
-      const chats = await withTimeout(c.getChats(), 280000, 'reading chats');
-      return chats.filter(ch => ch.isGroup).map(ch => ({ id: ch.id._serialized, name: ch.name || ch.id._serialized }));
+      const { groups, skipped } = await withTimeout(engine.listGroups(), 120000, 'reading chats');
+      if (skipped) console.log(`${new Date().toISOString()} [warn] groups: skipped ${skipped} chats that WhatsApp Web couldn't read`);
+      return groups;
     },
     'GET /history': async (_b, q) => {
       const c = engine.ready();

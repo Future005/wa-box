@@ -208,6 +208,38 @@ class Engine {
     return this.restart('logged out from WA Box');
   }
 
+  /**
+   * Every group on this number, read straight from the chat list WhatsApp Web already holds in the
+   * browser. The library's getChats() also asks WhatsApp's servers for every group's member list and
+   * fails completely if any one of those fails (seen as a one-letter error like "r" after a WhatsApp
+   * Web update), and it's slow with hundreds of groups. Here each chat is read on its own, a chat
+   * that can't be read is skipped and counted, and nothing goes over the network.
+   */
+  async listGroups() {
+    const c = this.ready();
+    if (!c.pupPage) {   // test client without a browser
+      const chats = await c.getChats();
+      return { groups: chats.filter(ch => ch.isGroup).map(ch => ({ id: ch.id._serialized, name: ch.name || ch.id._serialized })), skipped: 0 };
+    }
+    return c.pupPage.evaluate(() => {
+      const req = window.require;
+      const coll = req('WAWebCollections');
+      const groups = []; let skipped = 0;
+      const seen = new Set();
+      for (const chat of coll.Chat.getModelsArray()) {
+        try {
+          const id = chat.id && chat.id._serialized;
+          if (!id || !id.endsWith('@g.us') || seen.has(id)) continue;
+          seen.add(id);
+          const meta = chat.groupMetadata || (coll.GroupMetadata && coll.GroupMetadata.get(id));
+          const name = String(chat.formattedTitle || chat.name || (meta && meta.subject) || '').trim();
+          groups.push({ id, name: name || id });
+        } catch { skipped++; }
+      }
+      return { groups, skipped };
+    });
+  }
+
   ready() {
     if (this.status !== 'ready' || !this.client) {
       throw Object.assign(new Error(`WhatsApp is not ready (${this.status})`), { status: 409 });

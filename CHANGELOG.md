@@ -2,6 +2,9 @@
 
 ## 1.2.0 (3 Nov 2026)
 
+### Fixed
+- **Group sync failed with a bare "r"** after a WhatsApp Web update. The engine no longer uses the library's chat reader (which asked WhatsApp's servers about every group and failed completely if one lookup failed). It reads the group list WhatsApp Web already holds in the browser: faster, no network calls, and a chat that can't be read is skipped instead of breaking the sync. Errors like that now read in plain words.
+
 ### Number profiles
 - Every number that has been linked keeps its own **groups, group lists, scheduled messages and history**, like separate email accounts. Nothing is deleted when you switch numbers.
 - Only the linked number sends. The previous number's scheduled messages **wait**, with a clear notice; link it again and they go out. Past the late limit they're marked missed with the reason (weekly ones carry on).
