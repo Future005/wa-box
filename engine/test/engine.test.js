@@ -181,3 +181,28 @@ test('groups are read straight from the browser: one unreadable chat is skipped,
   assert.deepEqual(r.groups.map(g => g.name), ['Weekend Cohort 1', 'Thu-Fri Batch', 'Mentors']);
   assert.equal(r.skipped, 1);
 });
+
+test('image-send fix is applied to whatsapp-web.js (drops the media __x_id that broke sends)', () => {
+  const p = require('../src/patch-wwebjs');
+  assert.ok(['patched', 'already'].includes(p.apply({ strict: true })));
+  const src = fs.readFileSync(p.file(), 'utf8');
+  const at = src.indexOf(p.MARK);
+  assert.ok(at > src.indexOf('const message = {') && at < src.indexOf("Bot's won't reply"), 'right after the outgoing message is built');
+  assert.equal(p.apply(), 'already', 'applying twice changes nothing');
+});
+
+test('checking a chat reads WhatsApp Web memory: captions count as text, our messages are marked fromMe', async () => {
+  const { Engine } = require('../src/engine');
+  const e = new Engine({ ClientImpl: FakeClient, LocalAuthImpl: FakeAuth, chromePath: '/bin/false' });
+  e.status = 'ready';
+  const msgs = [
+    { id: { _serialized: 'a', fromMe: false }, body: 'hello', type: 'chat', t: 1 },
+    { id: { _serialized: 'b', fromMe: true }, body: '/9j/4AAQ…', caption: 'Class at 10', type: 'image', t: 2 },
+    { id: { _serialized: 'c', fromMe: true }, body: 'Quiz at 7', type: 'chat', t: 3 },
+  ];
+  const chats = { 'x@g.us': { msgs: { getModelsArray: () => msgs } } };
+  e.client = { pupPage: { evaluate: async (fn, ...args) => { global.window = { require: () => ({ Chat: { get: id => chats[id] } }) }; try { return await fn(...args); } finally { delete global.window; } } } };
+  const h = await e.chatHistory('x@g.us', 2);
+  assert.deepEqual(h.map(m => [m.body, m.fromMe]), [['Class at 10', true], ['Quiz at 7', true]]);
+  await assert.rejects(() => e.chatHistory('missing@g.us', 5), /not loaded/);
+});

@@ -3,6 +3,8 @@
 ## 1.2.0 (3 Nov 2026)
 
 ### Fixed
+- **Images failed to send** with "Data passed to getter must include an id property (it's how we memoize)" after a WhatsApp Web update. The engine now applies the community one-line fix to whatsapp-web.js (wwebjs/whatsapp-web.js#201938) at build time and on start.
+- **"Couldn't read the chat to check"** after an unclear send, and the "typing…" step, went through the same failing group lookup. Both now read WhatsApp Web's memory directly; image captions count when checking whether a message is in the chat.
 - **Group sync failed with a bare "r"** after a WhatsApp Web update. The engine no longer uses the library's chat reader (which asked WhatsApp's servers about every group and failed completely if one lookup failed). It reads the group list WhatsApp Web already holds in the browser: faster, no network calls, and a chat that can't be read is skipped instead of breaking the sync. Errors like that now read in plain words.
 
 ### Number profiles

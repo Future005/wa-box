@@ -60,11 +60,8 @@ function createServer(engine, { apiKey, MessageMediaImpl } = {}) {
       return groups;
     },
     'GET /history': async (_b, q) => {
-      const c = engine.ready();
-      const chat = await withTimeout(c.getChatById(chatId(q.get('chatId'))), 30000, 'opening chat');
       const limit = Math.min(100, Math.max(1, Number(q.get('limit')) || 25));
-      const msgs = await withTimeout(chat.fetchMessages({ limit }), 40000, 'reading messages');
-      return msgs.map(m => ({ id: m.id?._serialized, body: m.body || '', fromMe: !!m.fromMe, timestamp: m.timestamp, type: m.type }));
+      return withTimeout(engine.chatHistory(chatId(q.get('chatId')), limit), 40000, 'reading messages');
     },
     'POST /receipts': async b => {
       const ids = Array.isArray(b.ids) ? b.ids.filter(x => typeof x === 'string' && x.length < 200) : [];
@@ -72,9 +69,7 @@ function createServer(engine, { apiKey, MessageMediaImpl } = {}) {
       return engine.receipts(ids);
     },
     'POST /typing': async b => {
-      const c = engine.ready();
-      const chat = await withTimeout(c.getChatById(chatId(b.chatId)), 20000, 'opening chat');
-      if (b.state === 'paused') await chat.clearState(); else await chat.sendStateTyping();
+      await withTimeout(engine.chatState(chatId(b.chatId), b.state), 20000, 'typing');
       return { ok: true };
     },
     'POST /send-text': async b => {

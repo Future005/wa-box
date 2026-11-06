@@ -57,6 +57,10 @@ function clearStaleChromeLocks(dir, depth = 0) {
 
 class Engine {
   constructor({ ClientImpl, LocalAuthImpl, chromePath } = {}) {
+    if (!ClientImpl) {
+      const r = require('./patch-wwebjs').apply();   // image-send fix for the current WhatsApp Web
+      if (r.startsWith('skipped')) log('warn', `whatsapp-web.js patch ${r}`);
+    }
     const wweb = ClientImpl ? null : require('whatsapp-web.js');
     this.Client = ClientImpl || wweb.Client;
     this.LocalAuth = LocalAuthImpl || wweb.LocalAuth;
@@ -238,6 +242,38 @@ class Engine {
       }
       return { groups, skipped };
     });
+  }
+
+  /**
+   * Recent messages in a chat, read from WhatsApp Web's memory in the browser. The library's
+   * getChatById() asks WhatsApp's servers for the group's member list first, which fails on the
+   * current WhatsApp Web; we only need the messages. Image captions count as the text.
+   */
+  async chatHistory(chatId, limit) {
+    const c = this.ready();
+    if (!c.pupPage) {   // test client
+      const chat = await c.getChatById(chatId);
+      const msgs = await chat.fetchMessages({ limit });
+      return msgs.map(m => ({ id: m.id?._serialized, body: m.body || '', fromMe: !!m.fromMe, timestamp: m.timestamp, type: m.type }));
+    }
+    return c.pupPage.evaluate(async (id, n) => {
+      const coll = window.require('WAWebCollections');
+      const chat = coll.Chat.get(id);
+      if (!chat) throw new Error('This chat is not loaded in WhatsApp Web');
+      const all = chat.msgs.getModelsArray();
+      return all.slice(-n).map(m => ({ id: m.id && m.id._serialized, body: String(m.body && m.type === 'chat' ? m.body : (m.caption || m.body || '')),
+        fromMe: !!(m.id && m.id.fromMe), timestamp: m.t, type: m.type }));
+    }, chatId, limit);
+  }
+
+  /** "typing…" on or off in a chat, without opening the chat through the library. */
+  async chatState(chatId, state) {
+    const c = this.ready();
+    if (!c.pupPage) {
+      const chat = await c.getChatById(chatId);
+      return state === 'paused' ? chat.clearState() : chat.sendStateTyping();
+    }
+    return c.pupPage.evaluate((id, st) => { window.WWebJS.sendChatstate(st, id); return true; }, chatId, state === 'paused' ? 'stop' : 'typing');
   }
 
   ready() {

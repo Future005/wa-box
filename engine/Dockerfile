@@ -25,6 +25,8 @@ RUN if [ "$(dpkg --print-architecture)" = arm64 ]; then \
 ENV CHROME_PATH=/usr/local/bin/wa-chrome
 
 COPY src ./src
+# One-line fix to whatsapp-web.js for image sends on the current WhatsApp Web (see src/patch-wwebjs.js).
+RUN node src/patch-wwebjs.js
 COPY test ./test
 # Evals: if any engine test fails, the image doesn't build and the running version stays.
 RUN npm test && rm -rf test
