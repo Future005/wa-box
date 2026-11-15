@@ -135,7 +135,9 @@ api.get('/status', (req, res) => {
   const s = sched.state;
   const running = s.runningJobId ? db.prepare('SELECT id,title FROM jobs WHERE id=?').get(s.runningJobId) : null;
   res.json({
-    wa: { status: s.wa.status, phone: s.wa.phone, name: s.wa.pushName, since: s.wa.since || 0, error: req.user.role === 'admin' ? s.wa.error : undefined },
+    // status is what people see (the 'connection' machine, incl. "reconnecting"); engine is the raw engine status.
+    wa: { status: s.wa.view || s.wa.status, engine: s.wa.status, live: s.wa.live !== false && s.wa.status === 'ready', phone: s.wa.phone, name: s.wa.pushName,
+      since: s.wa.since || 0, upSince: s.wa.upSince || 0, checkedAt: s.wa.checkedAt || 0, error: req.user.role === 'admin' ? s.wa.error : undefined },
     dryRun: cfg.dryRun, paused: cfg.paused, dailyCap: cfg.dailyCap, maxLateMin: cfg.maxLateMin, hourlyCap: cfg.hourlyCap, dedupeHours: cfg.dedupeHours,
     quietStart: getSetting('quiet_start', '22:00'), quietEnd: getSetting('quiet_end', '08:00'), local: LOCAL,
     sentToday: sched.sentToday(), issues: alerts.openIssues().length, number: savedGroups.current(), numbers: savedGroups.numbers().length,
@@ -341,6 +343,11 @@ api.delete('/templates/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------- WhatsApp connection history ----------
+// "How long has it been connected, and how reliable is it?" Built from the connection changes the
+// scheduler logs (events kind 'whatsapp'). Uptime counts time in 'ready' over the window we have.
+api.get('/wa/history', (req, res) => res.json(sched.connectionHistory(Number(req.query.days) || 7)));
+
 // ---------- admin: WhatsApp connection ----------
 api.get('/wa/qr', requireAdmin, wrap(async (_req, res) => {
   try { res.json(await wa.getQr()); }
@@ -353,8 +360,7 @@ api.post('/wa/start', requireAdmin, wrap(async (req, res) => {
 }));
 api.post('/wa/logout', requireAdmin, wrap(async (req, res) => {
   await wa.logout();
-  savedGroups.forgetNumber('', req.user.username);   // its groups shouldn't stay on screen
-  audit(req.user.username, 'wa_logout');
+  audit(req.user.username, 'wa_logout');   // the number's groups and messages are kept (number profiles)
   res.json({ ok: true });
 }));
 

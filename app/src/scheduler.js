@@ -43,7 +43,7 @@ const OWNER = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
 const DONE_STATES = SM.group('send', 'noResend');
 
 const state = {
-  wa: { status: 'unknown', phone: null, pushName: null, error: null, checkedAt: 0, since: Date.now() },
+  wa: { status: 'unknown', view: 'unknown', phone: null, pushName: null, error: null, checkedAt: 0, since: Date.now(), upSince: 0 },
   busy: false, stopping: false, leader: false,
   runningJobId: null, currentGroup: null, nextSendAt: null,
   lastSentAt: 0, lastTickAt: 0, lastSuccessAt: getSetting('last_success_at', 0),
@@ -87,8 +87,18 @@ function acquireLease() {
 function releaseLease() { db.prepare("DELETE FROM locks WHERE name='sender' AND owner=?").run(OWNER); state.leader = false; }
 
 // ---------- WhatsApp status ----------
-async function refreshWa() {
-  const prev = state.wa.status;
+// Checked every few seconds on its own (startLoop), and right before each send. Concurrent callers
+// share one check. state.wa.status is the engine's status; state.wa.view is what people see
+// ("reconnecting" when linked but WhatsApp's own connection is down); since/upSince are when the
+// current view started and when it last became live.
+const LIVE_GRACE_MS = 2 * 60 * 1000;   // a "reconnecting" that lasts longer than this: send anyway (the engine says no safely)
+let waCheck = null;
+function refreshWa() {
+  if (!waCheck) waCheck = refreshWaOnce().finally(() => { waCheck = null; });
+  return waCheck;
+}
+async function refreshWaOnce() {
+  const prev = state.wa.view || state.wa.status;
   try {
     const s = await wa.getStatus();
     state.wa = { ...state.wa, ...s, error: s.engineError || null, checkedAt: Date.now() };
@@ -100,12 +110,15 @@ async function refreshWa() {
   } catch (e) {
     state.wa = { ...state.wa, status: 'unreachable', error: e.message, checkedAt: Date.now() };
   }
-  const now = state.wa.status;
+  state.wa.view = SM.connectionView(state.wa);
+  const now = state.wa.view;
   if (now !== prev) {
     state.wa.since = Date.now();
-    logEvent(now === 'ready' ? 'info' : 'warn', 'whatsapp', `Connection changed: ${prev} -> ${now}${state.wa.error ? ` (${state.wa.error})` : ''}`);
+    if (now === 'ready') state.wa.upSince = Date.now();
+    logEvent(now === 'ready' ? 'info' : 'warn', 'whatsapp', `Connection changed: ${prev} -> ${now}${state.wa.error && now !== 'ready' ? ` (${state.wa.error})` : ''}`);
   }
-  const ready = now === 'ready';
+  // Linked and live. A short reconnect holds sends; a long one doesn't (the send contract keeps it safe).
+  const ready = now === 'ready' || (now === 'reconnecting' && Date.now() - (state.wa.socketSince || state.wa.since) > LIVE_GRACE_MS);
   if (ready) {
     if (!state.readySince) state.readySince = Date.now();
     // Groups follow the linked number: a new number hides the old one's groups at once, then
@@ -614,7 +627,7 @@ function purgeMedia(now = Date.now()) {
   return jobs.length + orphans;
 }
 
-let timer = null;
+let timer = null, waTimer = null;
 function startLoop() {
   hooks.start();
   purgeMedia();
@@ -622,11 +635,15 @@ function startLoop() {
   logEvent('info', 'scheduler', `Started (instance ${OWNER})`);
   setTimeout(tick, FAST ? 10 : 3000);
   timer = setInterval(tick, TICK_MS);
+  // The connection is checked on its own every 10 s, even while a long send run keeps the tick busy,
+  // so what the app shows is never more than a few seconds old.
+  waTimer = setInterval(() => { if (!state.stopping) refreshWa().catch(e => logEvent('warn', 'whatsapp', e.message)); }, FAST ? 200 : 10 * 1000);
+  waTimer.unref?.();
 }
 /** Graceful stop: finish the message in flight, never start a new one, release the lock. */
 async function stop(timeoutMs = 25000) {
   state.stopping = true;
-  clearInterval(timer);
+  clearInterval(timer); clearInterval(waTimer);
   const until = Date.now() + timeoutMs;
   while (state.busy && Date.now() < until) await sleep(100);
   releaseLease();
@@ -666,6 +683,27 @@ function sendAgain(jobId, groupId, by) {
   logEvent('warn', 'manual', `${by} asked to send again (overrides the duplicate guard for this group)`, { jobId, group: row.group_name });
 }
 
+/**
+ * "How long has it been connected, and how reliable is it?" Built from the connection changes logged
+ * above (events kind 'whatsapp'). Uptime = share of time in 'ready' since the first change we have.
+ */
+function connectionHistory(days = 7) {
+  days = Math.min(30, Math.max(1, days));
+  const now = Date.now(), from = now - days * 86400e3;
+  const rows = db.prepare("SELECT at, message FROM events WHERE kind='whatsapp' AND message LIKE 'Connection changed:%' AND at >= ? ORDER BY at, id").all(from);
+  const changes = rows.map(r => { const m = /Connection changed: (\S+) -> (\S+)(?: \((.*)\))?/.exec(r.message); return m && { at: r.at, from: m[1], to: m[2], why: m[3] || null }; }).filter(Boolean);
+  const cur = state.wa.view || state.wa.status;
+  let up = 0, interruptions = 0;
+  for (let i = 0; i < changes.length; i++) {
+    const end = i + 1 < changes.length ? changes[i + 1].at : now;
+    if (changes[i].to === 'ready') up += end - changes[i].at;
+    if (changes[i].from === 'ready') interruptions++;
+  }
+  const start = changes.length ? changes[0].at : (state.wa.since || now);
+  const uptime = changes.length ? up / Math.max(1, now - start) : cur === 'ready' ? 1 : null;
+  return { days, since: start, uptime, interruptions, changes: changes.slice(-12).reverse(), now: cur, nowSince: state.wa.since || 0, upSince: state.wa.upSince || 0 };
+}
+
 function health() {
   const now = Date.now();
   const cfg = settings();
@@ -682,4 +720,4 @@ function health() {
   };
 }
 
-module.exports = { startLoop, stop, tick, purgeMedia, undo, cancelJob, rescheduleJob, splitRest, pollReceipts, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };
+module.exports = { connectionHistory, startLoop, stop, tick, purgeMedia, undo, cancelJob, rescheduleJob, splitRest, pollReceipts, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };

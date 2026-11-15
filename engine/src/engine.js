@@ -79,6 +79,7 @@ class Engine {
     this.stopping = false;
     this.strikes = 0;
     this.lastNightly = null;
+    this.socket = null; this.socketSince = null;
     this.acks = new Map();   // messageId -> latest WhatsApp receipt (1 sent, 2 delivered, 3 read)
   }
 
@@ -132,9 +133,16 @@ class Engine {
         this.info.waVersion = await c.getWWebVersion();
         if (this.info.waVersion) fs.writeFileSync(GOOD_VERSION_FILE, this.info.waVersion);
       } catch (e) { log('warn', 'could not read session info: ' + e.message); }
+      this.socket = 'CONNECTED'; this.socketSince = Date.now();
       this.setStatus('ready', `WhatsApp Web ${this.info.waVersion || '?'}`);
     });
-    c.on('change_state', s => log('info', `whatsapp state ${s}`));
+    // WhatsApp Web's own link to WhatsApp's servers. It can drop and come back while the session stays
+    // "ready" (OPENING → PAIRING → CONNECTED, several times a day). We report it, so the app can say
+    // "reconnecting" instead of "connected" during those seconds and hold sends until it's back.
+    c.on('change_state', s => {
+      log('info', `whatsapp state ${s}`);
+      if (s !== this.socket) { this.socket = s; this.socketSince = Date.now(); }
+    });
     // Delivery receipts for messages we sent. Kept in memory (bounded); WA Box asks for them.
     c.on('message_ack', (msg, ack) => {
       if (!msg?.fromMe || !msg.id?._serialized) return;
@@ -168,6 +176,7 @@ class Engine {
       log('warn', `starting WhatsApp (${reason})`);
       await this.teardown();
       if (this.stopping) return;
+      this.socket = null; this.socketSince = null;
       this.setStatus('initializing', reason);
       for (const d of clearStaleChromeLocks(path.join(DATA, 'session'))) log('warn', `removed a stale Chrome profile lock in ${d} (left by an old container)`);
       const c = this.build();
@@ -352,8 +361,11 @@ class Engine {
   }
 
   state() {
+    // live: linked AND WhatsApp Web's connection to WhatsApp is up right now.
+    const live = this.status === 'ready' && (!this.socket || this.socket === 'CONNECTED');
     return { status: this.status, since: this.since, phone: this.info.phone, pushName: this.info.pushName,
-      waVersion: this.info.waVersion, error: this.lastError, chromeMb: this.chromeRssMb() };
+      waVersion: this.info.waVersion, error: this.lastError, chromeMb: this.chromeRssMb(),
+      live, socket: this.socket || null, socketSince: this.socketSince || null };
   }
 }
 

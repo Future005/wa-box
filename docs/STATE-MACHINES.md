@@ -185,6 +185,7 @@ stateDiagram-v2
   direction LR
   unknown : Checking…
   unreachable : Engine offline
+  reconnecting : Reconnecting…
   created : Not connected
   initializing : Starting WhatsApp…
   qr_ready : Waiting for QR scan
@@ -210,12 +211,17 @@ stateDiagram-v2
   initializing --> ready : ready
   qr_ready --> failed : login_failed
   qr_ready --> ready : ready
+  ready --> reconnecting : link_dropped
+  reconnecting --> ready : link_back
+  reconnecting --> disconnected : dropped
+  reconnecting --> initializing : restart
 ```
 
 | State | Shown as | What it means |
 |---|---|---|
 | `unknown` (app only) | Checking… | WA Box has just started and hasn't heard from WhatsApp yet. |
 | `unreachable` (app only) | Engine offline | The WhatsApp engine is starting or offline. Scheduled messages wait. |
+| `reconnecting` (app only) | Reconnecting… | Still linked, but WhatsApp's own connection dropped for a moment (this happens a few times a day). It comes back by itself, usually within seconds; sends wait until it does. Nothing to do. |
 | `created` | Not connected | The engine is up but hasn't started WhatsApp yet. |
 | `initializing` | Starting WhatsApp… | Opening WhatsApp Web. Usually under a minute. |
 | `qr_ready` | Waiting for QR scan | Scan the QR code from the phone: WhatsApp → Settings → Linked devices → Link a device. |
@@ -229,6 +235,7 @@ Named groups (use these in code instead of listing states):
 | Group | States |
 |---|---|
 | `starting` | `unknown`, `created`, `initializing`, `authenticating` |
+| `selfHealing` | `unknown`, `created`, `initializing`, `authenticating`, `reconnecting`, `unreachable`, `disconnected`, `failed` |
 
 ## Group sync
 

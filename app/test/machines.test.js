@@ -87,7 +87,8 @@ test('the engine and the app agree on the WhatsApp connection machine', () => {
   const app = M.machines.connection;
   assert.deepEqual(E.STATES.slice().sort(), Object.keys(app.states).filter(s => !app.states[s].app).sort());
   const key = t => t.join('|');
-  assert.deepEqual(E.TRANSITIONS.map(key).sort(), app.transitions.map(key).sort());
+  const appOnly = t => app.states[t[0]]?.app || app.states[t[2]]?.app;   // the app's own view (e.g. reconnecting)
+  assert.deepEqual(E.TRANSITIONS.map(key).sort(), app.transitions.filter(t => !appOnly(t)).map(key).sort());
 });
 
 test('docs/STATE-MACHINES.md is generated from the current definitions (run npm run states:doc)', () => {

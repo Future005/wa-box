@@ -28,7 +28,8 @@ async function call(method, path, body, { timeoutMs = 60000 } = {}) {
 
 const getStatus = async () => {
   const s = await call('GET', '/status', undefined, { timeoutMs: 15000 });
-  return { status: s.status, phone: s.phone || null, pushName: s.pushName || null, waVersion: s.waVersion || null, engineError: s.error || null };
+  return { status: s.status, phone: s.phone || null, pushName: s.pushName || null, waVersion: s.waVersion || null, engineError: s.error || null,
+    live: s.live === undefined ? undefined : !!s.live, socket: s.socket || null, socketSince: s.socketSince || null };
 };
 const start = () => call('POST', '/start');
 const getQr = () => call('GET', '/qr');

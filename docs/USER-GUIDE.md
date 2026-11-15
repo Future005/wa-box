@@ -180,6 +180,20 @@ If three sends fail in a row, WA Box pauses all sending and tells the admins. Th
 4. New groups show up every few hours on their own, or press **Sync groups now**.
 5. **Changing the number?** Unlink it and link the other phone. See [More than one number](#more-than-one-number).
 
+### Is WhatsApp connected right now?
+
+The card at the bottom left and the *WhatsApp & groups* page show the same thing, checked every 10 seconds, and update by themselves.
+
+| You see | What it means | Do you need to do anything? |
+| --- | --- | --- |
+| **WhatsApp connected** · for 3 h | Linked and live. Messages go out. | No |
+| **Reconnecting…** | Still linked, but WhatsApp's own connection dropped for a moment (normal, a few times a day). Sends wait a few seconds and then go. | No |
+| **Starting WhatsApp…** / **Connecting…** | Starting up, e.g. after an update or the nightly refresh around 4 AM. Usually under a minute. | No |
+| **Waiting for QR scan** | The number was unlinked (from the phone or here). The QR code shows by itself. | Yes: scan it |
+| Any of the above **for more than 3 minutes** | Taking longer than usual. The card turns red and the page offers **Show QR code**. | Check, and link again if it doesn't come back |
+
+*WhatsApp & groups → Connection, last 7 days* shows how much of the time it was connected, each interruption, and how long each one lasted.
+
 ### More than one number
 
 WA Box keeps every number that has ever been linked, like separate email accounts. Each number has its own groups, group lists, scheduled messages and history.

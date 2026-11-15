@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     if (u.pathname === '/hook') { gw.hooks.push(JSON.parse(body)); return j(200, {}); }   // alert webhook (no engine key)
     if (req.headers['x-api-key'] !== KEY) return j(401, { message: 'bad key' });
-    if (u.pathname === '/status') return j(200, { status: gw.status, phone: gw.phone, pushName: 'Test' });
+    if (u.pathname === '/status') return j(200, { status: gw.status, phone: gw.phone, pushName: 'Test', live: gw.live ?? (gw.status === 'ready'), socketSince: gw.socketSince ?? null });
     if (u.pathname === '/typing') { const b = JSON.parse(body); if (b.state === 'typing' && gw.onTyping) gw.onTyping(b.chatId); return j(200, { ok: true }); }
     if (u.pathname === '/receipts') { const ids = JSON.parse(body).ids; return j(200, Object.fromEntries(ids.map(id => [id, gw.acks[id] ?? 1]))); }
     if (u.pathname === '/groups' && gw.groupsError) return j(500, { message: gw.groupsError });   // same shape as the real engine
@@ -97,7 +97,7 @@ afterEach(() => {
 
 beforeEach(() => {
   for (const t of ['sends', 'jobs', 'number_groups', 'numbers', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
-  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null, groupsError: null });
+  Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null, groupsError: null, live: undefined, socketSince: undefined });
   setSetting('alert_webhook', ''); setSetting('alert_done', true);
   setSetting('groups_phone', '919000000000');   // the test groups belong to the fake engine's number
   setSetting('dry_run', false); setSetting('paused', false); setSetting('daily_cap', 30); setSetting('hourly_cap', 40); setSetting('dedupe_hours', 20);
@@ -677,4 +677,45 @@ test('upgrade: messages made before numbers were tracked belong to the first num
   const id = addJob({ groups: [1], runAt: Date.now() + 3600e3, startAt: Date.now() + 3600e3, phone: null });
   await link(A, [{ id: '1@g.us', name: 'Group 1' }]);
   assert.equal(job(id).phone, A);
+});
+
+// ---------- what the app shows for the connection ----------
+test('linked but WhatsApp\'s own connection is down: shown as "reconnecting", sends wait, then go out when it is back', async () => {
+  addGroups(1);
+  const id = addJob({ groups: [1] });
+  gw.live = false; gw.socketSince = Date.now();
+  await sched.tick();
+  assert.equal(sched.state.wa.view, 'reconnecting');
+  assert.equal(sched.state.wa.status, 'ready', 'the engine still says linked');
+  assert.equal(gw.delivered.length, 0, 'held while reconnecting');
+  gw.live = true;
+  await runUntilIdle();
+  assert.equal(sched.state.wa.view, 'ready');
+  assert.ok(sched.state.wa.upSince > 0, '"connected for" counts from when it became live');
+  assert.equal(sentTo(G(1).id), 1);
+  assert.equal(job(id).status, 'done');
+});
+
+test('a reconnect that lasts too long does not hold sends forever (the engine answers safely)', async () => {
+  addGroups(1);
+  addJob({ groups: [1] });
+  gw.live = false; gw.socketSince = Date.now() - 5 * 60000;
+  await runUntilIdle();
+  assert.equal(sentTo(G(1).id), 1);
+});
+
+test('connection history: changes, interruptions and the share of time connected', async () => {
+  const now = Date.now();
+  db.exec("DELETE FROM events");
+  const ins = db.prepare("INSERT INTO events(at, level, kind, message) VALUES(?, 'info', 'whatsapp', ?)");
+  ins.run(now - 10 * 3600e3, 'Connection changed: unknown -> ready');
+  ins.run(now - 6 * 3600e3, 'Connection changed: ready -> reconnecting');
+  ins.run(now - 6 * 3600e3 + 30e3, 'Connection changed: reconnecting -> ready');
+  ins.run(now - 2 * 3600e3, 'Connection changed: ready -> disconnected (Disconnected: NAVIGATION)');
+  ins.run(now - 2 * 3600e3 + 60e3, 'Connection changed: disconnected -> ready');
+  const h = sched.connectionHistory(7);
+  assert.equal(h.interruptions, 2);
+  assert.ok(h.uptime > 0.99 && h.uptime < 1, `uptime ${h.uptime}`);
+  assert.deepEqual(h.changes.map(c => c.to), ['ready', 'disconnected', 'ready', 'reconnecting', 'ready']);
+  assert.equal(h.changes[1].why, 'Disconnected: NAVIGATION');
 });

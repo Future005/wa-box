@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1 (15 Nov 2026)
+
+### The connection status is always current, and says what's really going on
+- The connection is checked every 10 seconds on its own, even while a long send is running. The left-hand card and the WhatsApp page show the same answer and update by themselves (the page used to keep whatever it showed when you opened it).
+- New **Reconnecting…** state: still linked, but WhatsApp's own connection dropped for a moment (it happens a few times a day). It used to show as "connected". Sends wait for it to come back (at most 2 minutes, then they go and the engine answers safely).
+- **"Connected · for 3 h"** on the card and the page, plus **Connection, last 7 days**: share of time connected, each interruption and how long it lasted.
+- **Show QR code** only appears when a scan is really needed (or something has taken over 3 minutes). Starting, restarting and reconnecting say "nothing to do" instead of asking for a QR scan.
+- Fixed: **Unlink this number** failed with an error after unlinking.
+
 ## 1.3.0 (15 Nov 2026)
 
 ### Explicit state machines

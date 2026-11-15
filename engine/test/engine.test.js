@@ -210,3 +210,17 @@ test('checking a chat reads WhatsApp Web memory: captions count as text, our mes
 test('every connection change in these tests follows the state machine (src/states.js)', () => {
   assert.equal(engine.unexpectedTransitions || 0, 0);
 });
+
+test('live means linked AND WhatsApp Web\'s own connection is up; a reconnect shows as not live', async () => {
+  const { Engine } = require('../src/engine');
+  const e = new Engine({ ClientImpl: FakeClient, LocalAuthImpl: FakeAuth, chromePath: '/bin/false' });
+  e.status = 'ready'; e.socket = 'CONNECTED';
+  assert.equal(e.state().live, true);
+  e.socket = 'OPENING';                       // WhatsApp Web reconnecting (happens several times a day)
+  assert.equal(e.state().live, false);
+  assert.equal(e.state().status, 'ready', 'still linked');
+  e.socket = 'CONNECTED';
+  assert.equal(e.state().live, true);
+  e.status = 'initializing';
+  assert.equal(e.state().live, false);
+});

@@ -585,3 +585,11 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .num-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .num-row b { font-size: 14px; } .num-row small { display: block; color: var(--ink-3); font-size: 12.5px; }
 .num-row .grow { flex: 1; }
+
+/* WhatsApp connection history */
+.wa-history { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.wa-history h3 { font-size: 14px; margin: 0 0 4px; }
+.conn-log { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; font-size: 13.5px; }
+.conn-log li { display: grid; grid-template-columns: 150px 1fr auto; gap: 10px; align-items: baseline; }
+.conn-log .when { color: var(--ink-3); }
+@media (max-width: 520px) { .conn-log li { grid-template-columns: 1fr auto; } .conn-log .when { grid-column: 1 / -1; } }

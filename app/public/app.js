@@ -18,6 +18,9 @@
   const relDay = ms => { const k = ist(ms).date; if (k === todayKey()) return 'Today'; if (k === ist(Date.now() + DAY).date) return 'Tomorrow'; if (k === ist(Date.now() - DAY).date) return 'Yesterday'; return null; };
   const whenLabel = ms => `${relDay(ms) || shortDate(ms)}, ${ist(ms).time}`;
   const plural = (n, w, p) => `${n} ${n === 1 ? w : (p || w + 's')}`;
+  // "3 h 12 min", "45 s", "2 days 4 h" (from milliseconds)
+  const span = ms => { const t = Math.max(0, Math.round(ms / 1000)); if (t < 60) return `${t} s`; const m = Math.floor(t / 60); if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60); if (h < 48) return `${h} h${m % 60 ? ` ${m % 60} min` : ''}`; const d = Math.floor(h / 24); return `${d} days${h % 24 ? ` ${h % 24} h` : ''}`; };
   const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
   const dur = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
   const firstLine = t => (String(t || '').split('\n').find(l => l.trim()) || '').replace(/[*_~`]/g, '').trim();
@@ -163,7 +166,7 @@
       }
       if (S.drawerJob) { const j = findJob(S.drawerJob); if (j) fillDrawer(j); }
       if (S.view === 'whatsapp') { await loadGroups(); renderSyncDetail(); }
-      S.tick = setTimeout(loop, busy ? 4000 : 15000);
+      S.tick = setTimeout(loop, busy || S.view === 'whatsapp' ? 4000 : 15000);
     };
     S.tick = setTimeout(loop, 4000);
     clearInterval(S.clock);
@@ -204,13 +207,13 @@
       if (changed) { S.viewPhone = null; await Promise.all([loadGroups(), loadJobs(), loadLists()]); toast(`Now using ${fmtPhone(s.number)}. The previous number's messages are kept and wait for it.`); if (['today', 'scheduled', 'lists'].includes(S.view)) route(); }
     }
     renderNumberSwitch();
-    const tone = SMx.tone('connection', wa);
-    const conn = [tone === 'good' ? 'ok' : tone === 'bad' ? 'bad' : 'warn', SMx.label('connection', wa)];
-    $('#conn').title = SMx.help('connection', wa);
-    $('#conn-dot').className = 'dot ' + conn[0];
-    $('#conn-title').textContent = conn[1];
-    $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, fmtPhone(s.wa.phone)].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
+    const c = connView();
+    $('#conn').title = c.help;
+    $('#conn-dot').className = 'dot ' + c.dot;
+    $('#conn-title').textContent = c.title;
+    $('#conn-sub').textContent = c.sub;
     $('#conn').setAttribute('href', isAdmin() ? '#whatsapp' : '#today');
+    if (S.view === 'whatsapp') renderConnectionPanel();
 
     const a = [];
     // Say exactly what's going on, and only use red when someone has to act: starting up or
@@ -220,6 +223,7 @@
     if (wa === 'qr_ready') a.push(['warn', isAdmin() ? 'WhatsApp needs to be linked: scan the QR code. Scheduled messages wait until then.' : 'WhatsApp needs to be linked by an admin. Scheduled messages wait until then.', link]);
     else if (SMx.is('connection', wa, 'starting') && forMin < 3) { /* starting: no banner */ }
     else if (wa === 'unreachable' && forMin < 2) { /* engine restarting: no banner */ }
+    else if (wa === 'reconnecting' && forMin < 3) { /* WhatsApp's own reconnect: seconds, nothing to do */ }
     else if (wa !== 'ready') a.push(['bad', `WhatsApp isn't connected${wa === 'unreachable' ? ' (the engine is offline)' : ''}. Scheduled messages wait until it is.`, link]);
     if (viewingAway()) {
       const n = S.numbers.find(x => x.phone === S.viewPhone) || {};
@@ -1068,13 +1072,9 @@
   async function renderWhatsapp() {
     if (viewingAway()) { S.viewPhone = null; renderNumberSwitch(); await Promise.all([loadJobs(), loadLists()]); }   // this page is about the linked number
     await Promise.all([refreshStatus(), loadGroups()]);
-    const s = S.status.wa;
-    const ready = s.status === 'ready';
-    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${ready ? 'ok' : 'warn'}"></span><span><b>${ready ? `Connected as ${esc(s.name || 'WhatsApp')}` : s.status === 'qr_ready' ? 'Waiting for you to scan the QR code' : s.status === 'unreachable' ? 'The WhatsApp engine is starting or offline' : 'Not connected'}</b><small>${ready && s.phone ? esc(fmtPhone(s.phone)) : ready ? '' : 'Press “Show QR code”, then scan it from the phone.'}</small></span></div>`;
-    $('#wa-connect').classList.toggle('hidden', ready);
-    $('#wa-logout').classList.toggle('hidden', !ready);
+    const ready = S.status.wa.status === 'ready';
     $('#qr-wrap').classList.add('hidden');
-    if (!ready && s.status === 'qr_ready') pollQr();
+    renderConnectionPanel(true);
     renderSyncDetail();
     await loadNumbers();
     $('#numbers-panel').classList.toggle('hidden', S.numbers.length < 2);
@@ -1088,7 +1088,7 @@
   });
   function renderSyncDetail() {
     const s = S.sync; if (!s) return;
-    const ready = S.status?.wa?.status === 'ready';
+    const ready = ['ready', 'reconnecting'].includes(S.status?.wa?.status);   // still linked while reconnecting
     const el = $('#sync-detail');
     const st = s.state || (s.running ? 'syncing' : s.error ? 'failed' : s.finishedAt ? 'synced' : 'never');   // the 'sync' state machine
     el.className = 'sync-detail' + (st === 'failed' ? ' bad' : '');
@@ -1100,6 +1100,57 @@
     $('#wa-sync').disabled = st === 'syncing' || !ready;
     $('#wa-sync').textContent = st === 'syncing' ? 'Syncing…' : 'Sync groups now';
   }
+  // ---- the WhatsApp connection: one view, used by the sidebar, the banner and this page ----
+  // state = the 'connection' machine (machines.js), incl. "reconnecting" (linked, WhatsApp's own link down).
+  function connView() {
+    const w = S.status?.wa || { status: 'unknown' };
+    const st = w.status || 'unknown';
+    const forMs = w.since ? Date.now() - w.since : 0;
+    const tone = SMx.tone('connection', st);
+    // A person only needs to act when a scan is needed, or when "getting there by itself" has taken too long.
+    const needsScan = st === 'qr_ready';
+    const stuck = !needsScan && st !== 'ready' && SMx.is('connection', st, 'selfHealing') && forMs > 3 * 60000;
+    const who = [w.name, fmtPhone(w.phone)].filter(Boolean).join(' · ');
+    return {
+      state: st, live: st === 'ready', needsScan, stuck, forMs, help: SMx.help('connection', st),
+      dot: tone === 'good' ? 'ok' : tone === 'bad' && (stuck || st === 'qr_ready') ? 'bad' : 'warn',
+      title: SMx.label('connection', st),
+      sub: st === 'ready' ? `${who}${w.upSince ? ` · for ${span(Date.now() - w.upSince)}` : ''}`
+        : needsScan ? (isAdmin() ? 'Open to scan the QR code' : 'Ask an admin to scan the QR code')
+        : stuck ? `For ${span(forMs)} · ${isAdmin() ? 'open to check' : 'tell an admin'}`
+        : `${forMs ? `${span(forMs)} · ` : ''}nothing to do`,
+    };
+  }
+  function renderConnectionPanel(force) {
+    const c = connView(), w = S.status.wa;
+    const key = `${c.state}|${c.stuck}`;
+    const checked = w.checkedAt ? `Checked ${span(Date.now() - w.checkedAt)} ago` : '';
+    const line = c.state === 'ready'
+      ? [`Connected as ${esc(w.name || 'WhatsApp')}`, `${esc(fmtPhone(w.phone))}${w.upSince ? ` · live for ${span(Date.now() - w.upSince)}` : ''} · ${checked}`]
+      : c.needsScan ? ['Scan the QR code to link a number', 'On the phone: WhatsApp → Settings → Linked devices → Link a device.']
+      : c.stuck ? [`${esc(c.title)} for ${span(c.forMs)}`, `${esc(c.help)} It's taking longer than usual: if it doesn't come back in a few minutes, press “Show QR code” to link again. · ${checked}`]
+      : [esc(c.title), `${esc(c.help)}${c.forMs ? ` · ${span(c.forMs)} so far` : ''} · ${checked}`];
+    $('#wa-detail').innerHTML = `<div class="wa-state"><span class="dot ${c.dot}"></span><span><b>${line[0]}</b><small>${line[1]}</small></span></div>`;
+    $('#wa-connect').classList.toggle('hidden', !c.stuck);          // the QR shows by itself when a scan is needed
+    $('#wa-logout').classList.toggle('hidden', !['ready', 'reconnecting'].includes(c.state));
+    if (c.needsScan && (force || S.connKey !== key)) pollQr();
+    if (!c.needsScan) $('#qr-wrap').classList.add('hidden');
+    if (force || S.connKey !== key || Date.now() - (S.histAt || 0) > 60000) renderConnectionHistory();
+    S.connKey = key;
+  }
+  async function renderConnectionHistory() {
+    S.histAt = Date.now();
+    let h; try { h = await api('wa/history?days=7'); } catch { return; }
+    if (!h.changes.length && h.uptime === null) { $('#wa-history').innerHTML = ''; return; }
+    const pct = h.uptime === null ? '' : `${(Math.floor(h.uptime * 1000) / 10).toFixed(1)}% connected`;
+    const rows = h.changes.map((x, i) => {
+      const end = i === 0 ? Date.now() : h.changes[i - 1].at;
+      return `<li><span class="when">${esc(whenLabel(x.at))}</span><span>${esc(SMx.label('connection', x.to))}</span><span class="hint">${i === 0 ? `for ${span(end - x.at)} (now)` : span(end - x.at)}</span></li>`;
+    }).join('');
+    $('#wa-history').innerHTML = `<h3>Connection, last ${h.days} days</h3>
+      <p class="hint">${[pct, `${plural(h.interruptions, 'interruption')}`].filter(Boolean).join(' · ')}. Short reconnects and the nightly refresh (around 4 AM) are normal; sends wait and go out right after.</p>
+      ${rows ? `<ol class="conn-log">${rows}</ol>` : ''}`;
+  }
   function pollQr() {
     clearInterval(S.qrTimer);
     const tick = async () => {
@@ -1109,6 +1160,7 @@
         if (r.qrCode) { $('#qr-img').src = r.qrCode; $('#qr-wrap').classList.remove('hidden'); }
         await refreshStatus();
         if (S.status.wa.status === 'ready') { clearInterval(S.qrTimer); toast('WhatsApp connected. Groups sync in a minute or two.'); renderWhatsapp(); }
+        else if (S.status.wa.status !== 'qr_ready' && !connView().stuck) { clearInterval(S.qrTimer); $('#qr-wrap').classList.add('hidden'); }
       } catch { /* keep polling */ }
     };
     tick(); S.qrTimer = setInterval(tick, 4000);

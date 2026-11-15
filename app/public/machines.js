@@ -143,6 +143,7 @@
       states: {
         unknown: { label: 'Checking…', tone: 'neutral', app: true, help: 'WA Box has just started and hasn\'t heard from WhatsApp yet.' },
         unreachable: { label: 'Engine offline', tone: 'bad', app: true, help: 'The WhatsApp engine is starting or offline. Scheduled messages wait.' },
+        reconnecting: { label: 'Reconnecting…', tone: 'warn', app: true, help: "Still linked, but WhatsApp's own connection dropped for a moment (this happens a few times a day). It comes back by itself, usually within seconds; sends wait until it does. Nothing to do." },
         created: { label: 'Not connected', tone: 'warn', help: 'The engine is up but hasn\'t started WhatsApp yet.' },
         initializing: { label: 'Starting WhatsApp…', tone: 'warn', help: 'Opening WhatsApp Web. Usually under a minute.' },
         qr_ready: { label: 'Waiting for QR scan', tone: 'warn', help: 'Scan the QR code from the phone: WhatsApp → Settings → Linked devices → Link a device.' },
@@ -164,8 +165,15 @@
         ['initializing', 'ready', 'ready'],
         ['qr_ready', 'login_failed', 'failed'],
         ['qr_ready', 'ready', 'ready'],                        // some sessions report ready without "authenticated"
+        // App view only: linked, but WhatsApp Web's own connection is down for a moment.
+        ['ready', 'link_dropped', 'reconnecting'], ['reconnecting', 'link_back', 'ready'],
+        ['reconnecting', 'dropped', 'disconnected'], ['reconnecting', 'restart', 'initializing'],
       ],
-      groups: { starting: ['unknown', 'created', 'initializing', 'authenticating'] },
+      groups: {
+        starting: ['unknown', 'created', 'initializing', 'authenticating'],
+        // Nothing for a person to do: it is getting there by itself (a scan is only needed in qr_ready).
+        selfHealing: ['unknown', 'created', 'initializing', 'authenticating', 'reconnecting', 'unreachable', 'disconnected', 'failed'],
+      },
     },
 
     // ---------------------------------------------------------------------------------------
@@ -270,5 +278,8 @@
   /** Every distinct [from, to] pair (for the database check). */
   const pairs = name => [...new Set(m(name).transitions.map(([f, , t]) => `${f}\u0000${t}`))].map(k => k.split('\u0000'));
 
-  return { NEW, PERSON_EVENTS, machines, state, label, help, tone, group, is, canGo, next, can, pairs };
+  /** What the app shows for the connection: the engine's status, or "reconnecting" when linked but not live. */
+  const connectionView = wa => (wa && wa.status === 'ready' && wa.live === false ? 'reconnecting' : (wa && wa.status) || 'unknown');
+
+  return { NEW, PERSON_EVENTS, connectionView, machines, state, label, help, tone, group, is, canGo, next, can, pairs };
 });
