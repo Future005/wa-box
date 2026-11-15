@@ -27,10 +27,11 @@ The README animations live in `media/` (HyperFrames). If you change something th
 ## Making a change
 
 1. Read [AGENTS.md](AGENTS.md): the code map and the rules every change must keep (the send contract, write-ahead records, `createJob()` as the only way to schedule, no inline styles).
-2. Add or update a test that acts out the real situation. The style is in `app/test/scheduler.test.js`: describe what goes wrong in real life, then assert nothing was sent twice and nothing failed silently.
-3. Run both test suites. They also run on every pull request and in the Docker build.
-4. Keep the words in the app plain and short. Say what happened and what to do.
-5. If you change behaviour people see, update `docs/USER-GUIDE.md`, `docs/API.md` and `CHANGELOG.md`.
+2. Adding or changing a status? Do it in [`app/public/machines.js`](app/public/machines.js) first (states, words, allowed changes), then `cd app && npm run states:doc`. See [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md).
+3. Add or update a test that acts out the real situation. The style is in `app/test/scheduler.test.js`: describe what goes wrong in real life, then assert nothing was sent twice and nothing failed silently.
+4. Run both test suites. They also run on every pull request and in the Docker build.
+5. Keep the words in the app plain and short. Say what happened and what to do.
+6. If you change behaviour people see, update `docs/USER-GUIDE.md`, `docs/API.md` and `CHANGELOG.md`.
 
 ## Pull requests
 

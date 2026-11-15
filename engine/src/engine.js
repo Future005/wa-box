@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const QRCode = require('qrcode');
+const states = require('./states');
 
 const DATA = process.env.DATA_DIR || '/data';
 const GOOD_VERSION_FILE = path.join(DATA, 'last-good-wa-version.txt');
@@ -66,7 +67,7 @@ class Engine {
     this.LocalAuth = LocalAuthImpl || wweb.LocalAuth;
     this.chromePath = chromePath || process.env.CHROME_PATH || undefined;
     this.client = null;
-    this.status = 'created';          // created | initializing | qr_ready | authenticating | ready | disconnected | failed
+    this.status = 'created';          // the connection state machine: src/states.js
     this.since = Date.now();
     this.qr = null; this.qrDataUrl = null;
     this.info = { phone: null, pushName: null, waVersion: null };
@@ -82,6 +83,11 @@ class Engine {
   }
 
   setStatus(s, why = '') {
+    // Checked against the connection state machine (src/states.js); unexpected changes are logged, not blocked.
+    if (!states.STATES.includes(s) || !states.allowed(this.status, s)) {
+      this.unexpectedTransitions = (this.unexpectedTransitions || 0) + 1;
+      log('warn', `unexpected connection change ${this.status} -> ${s} (see src/states.js)`);
+    }
     if (s !== this.status) log(s === 'ready' ? 'info' : 'warn', `status ${this.status} -> ${s}${why ? ` (${why})` : ''}`);
     this.status = s; this.since = Date.now();
     if (s !== 'qr_ready') { this.qr = null; this.qrDataUrl = null; }

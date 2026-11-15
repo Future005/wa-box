@@ -36,12 +36,13 @@
     img: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>',
     user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1-3.6 3.8-5.5 7-5.5s6 1.9 7 5.5"/></svg>',
   };
-  const STATUS = { scheduled: 'Scheduled', running: 'Sending', done: 'Done', done_with_errors: 'Done, with errors', cancelled: 'Aborted',
-    sent: 'Sent', dry_run: 'Practice', failed: 'Failed', skipped: 'Skipped', missed: 'Missed', retry: 'Retrying', pending: 'Waiting',
-    sending: 'Sending', uncertain: 'Checking', unconfirmed: 'Unconfirmed', blocked_duplicate: 'Duplicate blocked' };
-  const SEND_STATUS = { cancelled: 'Not sent (aborted)' };
-  const sendPill = s => `<span class="pill ${esc(s)}">${esc(SEND_STATUS[s] || STATUS[s] || s)}</span>`;
-  const pill = s => `<span class="pill ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+  // Every status, its words and its meaning come from the state machines (machines.js, shared with
+  // the server). Hover a status to see what it means and what to do.
+  const SMx = window.WABoxMachines;
+  const pill = (s, machine = 'job') => `<span class="pill ${esc(s)}" title="${esc(SMx.help(machine, s))}">${esc(SMx.label(machine, s))}</span>`;
+  const sendPill = s => pill(s, 'send');
+  const sendsIn = (j, g) => j.sends.filter(x => SMx.is('send', x.status, g)).length;
+  const settled = j => sendsIn(j, 'delivered') + sendsIn(j, 'didNotGet') + sendsIn(j, 'aborted');
 
   // WhatsApp-style formatting for the preview: *bold* _italic_ ~strike~ ```mono``` `code`,
   // "- " / "* " bullets, "1. " numbered lists, "> " quotes, and links.
@@ -203,9 +204,9 @@
       if (changed) { S.viewPhone = null; await Promise.all([loadGroups(), loadJobs(), loadLists()]); toast(`Now using ${fmtPhone(s.number)}. The previous number's messages are kept and wait for it.`); if (['today', 'scheduled', 'lists'].includes(S.view)) route(); }
     }
     renderNumberSwitch();
-    const conn = { ready: ['ok', 'WhatsApp connected'], qr_ready: ['warn', 'Waiting for QR scan'], authenticating: ['warn', 'Connecting…'],
-      initializing: ['warn', 'Starting WhatsApp…'], created: ['warn', 'Not connected'], disconnected: ['bad', 'Disconnected'],
-      failed: ['bad', 'Connection failed'], action_required: ['bad', 'Needs attention'], unreachable: ['bad', 'Engine offline'], unknown: ['warn', 'Checking…'] }[wa] || ['warn', wa];
+    const tone = SMx.tone('connection', wa);
+    const conn = [tone === 'good' ? 'ok' : tone === 'bad' ? 'bad' : 'warn', SMx.label('connection', wa)];
+    $('#conn').title = SMx.help('connection', wa);
     $('#conn-dot').className = 'dot ' + conn[0];
     $('#conn-title').textContent = conn[1];
     $('#conn-sub').textContent = wa === 'ready' ? [s.wa.name, fmtPhone(s.wa.phone)].filter(Boolean).join(' · ') : (isAdmin() ? 'Open to connect' : 'Ask an admin to connect');
@@ -217,7 +218,7 @@
     const forMin = s.wa.since ? (Date.now() - s.wa.since) / 60000 : 99;
     const link = isAdmin() ? ['Open WhatsApp & groups', '#whatsapp'] : null;
     if (wa === 'qr_ready') a.push(['warn', isAdmin() ? 'WhatsApp needs to be linked: scan the QR code. Scheduled messages wait until then.' : 'WhatsApp needs to be linked by an admin. Scheduled messages wait until then.', link]);
-    else if (['initializing', 'authenticating', 'created', 'unknown'].includes(wa) && forMin < 3) { /* starting: no banner */ }
+    else if (SMx.is('connection', wa, 'starting') && forMin < 3) { /* starting: no banner */ }
     else if (wa === 'unreachable' && forMin < 2) { /* engine restarting: no banner */ }
     else if (wa !== 'ready') a.push(['bad', `WhatsApp isn't connected${wa === 'unreachable' ? ' (the engine is offline)' : ''}. Scheduled messages wait until it is.`, link]);
     if (viewingAway()) {
@@ -302,12 +303,12 @@
 
     const recentIssues = S.past.filter(j => j.status === 'done_with_errors' && now - j.updatedAt < 7 * DAY).slice(0, 5);
     $('#today-attention').innerHTML = recentIssues.map(j => {
-      const bad = j.sends.filter(x => ['failed', 'missed', 'skipped'].includes(x.status)).length;
-      return `<div class="pl-row clickable" data-job="${j.id}"><span><b>${esc(jobName(j))}</b><small>${plural(bad, 'group')} didn't get it · ${esc(whenLabel(j.runAt))}</small></span>${pill('failed')}</div>`;
+      const bad = sendsIn(j, 'didNotGet');
+      return `<div class="pl-row clickable" data-job="${j.id}"><span><b>${esc(jobName(j))}</b><small>${plural(bad, 'group')} didn't get it · ${esc(whenLabel(j.runAt))}</small></span>${pill(j.status)}</div>`;
     }).join('');
     loadSendsQuiet().then(() => {
-      $('#today-recent').innerHTML = S.sends.filter(x => ['sent', 'dry_run'].includes(x.status)).slice(0, 6)
-        .map(x => `<div class="pl-row clickable" data-job="${x.jobId}"><span><b>${esc(x.group)}</b><small>${esc(firstLine(x.preview))} · ${esc(ago(x.at))}</small></span>${pill(x.status)}</div>`).join('');
+      $('#today-recent').innerHTML = S.sends.filter(x => SMx.is('send', x.status, 'delivered')).slice(0, 6)
+        .map(x => `<div class="pl-row clickable" data-job="${x.jobId}"><span><b>${esc(x.group)}</b><small>${esc(firstLine(x.preview))} · ${esc(ago(x.at))}</small></span>${sendPill(x.status)}</div>`).join('');
     });
   }
   function againCandidates() {
@@ -348,16 +349,15 @@
       return `<div class="day"><h3>${rel ? `<span class="rel">${rel}</span>` : ''}<span>${DOW_LONG[x.dow]}, ${x.d} ${MON[x.m]}</span></h3><div class="day-rows">${js.map(jobRowHtml).join('')}</div></div>`;
     }).join('');
   }
-  const isStartingSoon = j => j.status === 'scheduled' && j.startAt - Date.now() < 3 * 60000 && !j.sends.some(x => !['pending', 'retry'].includes(x.status));
+  const isStartingSoon = j => j.status === 'scheduled' && j.startAt - Date.now() < 3 * 60000 && j.sends.every(x => SMx.is('send', x.status, 'waiting'));
   function liveLine(j) {
-    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed', 'blocked_duplicate', 'unconfirmed'].includes(s.status)).length;
+    const sent = sendsIn(j, 'delivered'), bad = sendsIn(j, 'didNotGet');
     const r = S.status?.running;
     const next = r && r.id === j.id && r.nextSendAt ? ` · next ~${ist(r.nextSendAt).time}` : r && r.id === j.id && r.group ? ` · sending to ${r.group}` : '';
-    return `${done} of ${j.groups.length} sent${next}`;
+    return `${sent} of ${j.groups.length} sent${bad ? ` · ${bad} didn't get it` : ''}${next}`;
   }
   function jobRowHtml(j) {
-    const done = j.sends.filter(s => ['sent', 'dry_run', 'failed', 'skipped', 'missed', 'blocked_duplicate', 'unconfirmed'].includes(s.status)).length;
-    const pct = j.groups.length ? Math.round(done / j.groups.length * 100) : 0;
+    const pct = j.groups.length ? Math.round(settled(j) / j.groups.length * 100) : 0;
     const soon = isStartingSoon(j);
     return `<div class="job-row" role="button" tabindex="0" data-job="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span>
@@ -400,7 +400,7 @@
     $('#dr-title').textContent = jobName(j);
     $('#dr-sub').textContent = `${whenLabel(j.runAt)}${j.repeatDays.length ? ` · repeats ${repeatLabel(j.repeatDays)}` : ''}`;
     const byId = new Map(j.sends.map(s => [s.group_id, s]));
-    const sent = j.sends.filter(s => ['sent', 'dry_run'].includes(s.status)).length;
+    const sent = sendsIn(j, 'delivered');
     const delivered = j.sends.filter(s => s.status === 'sent' && s.ack >= 2).length;
     $('#dr-body').innerHTML = `
       ${j.note ? `<div class="alert warn">${ICON.warn}<span>${esc(j.note)}</span></div>` : ''}
@@ -416,7 +416,7 @@
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
         const canDecide = s && ['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(s.status);
         const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
-        return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${s ? sendPill(s.status) : '<span class="pill scheduled">Waiting</span>'}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
+        return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${sendPill(s ? s.status : 'pending')}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
     const acts = [];
     if (isStartingSoon(j)) acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
@@ -470,7 +470,7 @@
     await loadJobs(); j = findJob(j.id) || j;
     if (!['scheduled', 'running'].includes(j.status)) { toast('This message already finished, so there is nothing to abort.', true); return afterChange(j.id); }
     const n = j.groups.length;
-    const got = j.sends.filter(x => ['sent', 'dry_run', 'uncertain', 'sending'].includes(x.status)).length;
+    const got = sendsIn(j, 'reachedOrReaching');
     const running = j.status === 'running' || got > 0;
     const weekly = j.repeatDays.length > 0;
     const when = whenLabel(j.runAt);
@@ -501,7 +501,7 @@
 
   async function rescheduleFlow(j) {
     await loadJobs(); j = findJob(j.id) || j;
-    if (j.status !== 'scheduled' || j.sends.some(x => !['pending', 'retry'].includes(x.status))) {
+    if (j.status !== 'scheduled' || !j.sends.every(x => SMx.is('send', x.status, 'waiting'))) {
       toast('It has already started sending, so it can\'t be rescheduled. Abort it, or use "Change the rest".', true); return afterChange(j.id);
     }
     const weekly = j.repeatDays.length > 0;
@@ -532,7 +532,7 @@
   // Sending, and the text or the time is wrong? Stop it here and send a fixed version to only the groups still waiting.
   async function changeRestFlow(j) {
     await loadJobs(); j = findJob(j.id) || j;
-    const got = j.sends.filter(x => ['sent', 'dry_run', 'uncertain', 'sending'].includes(x.status)).length;
+    const got = sendsIn(j, 'reachedOrReaching');
     const left = j.groups.length - got;
     if (!['scheduled', 'running'].includes(j.status) || left <= 0) { toast('Every group already has it, so there is nothing left to change.', true); return afterChange(j.id); }
     if (!await dialog({ title: 'Change the rest?', ok: 'Abort and edit the rest', cancel: "Don't abort",
@@ -559,7 +559,7 @@
   // ============ Sent ============
   async function renderSent() {
     await loadSendsQuiet();
-    const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Problems', ['failed', 'missed', 'skipped', 'retry', 'unconfirmed', 'blocked_duplicate', 'uncertain']], practice: ['Practice', ['dry_run']] };
+    const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Problems', SMx.group('send', 'didNotGet')], practice: ['Practice', ['dry_run']] };
     const count = k => k === 'all' ? S.sends.length : S.sends.filter(s => groups[k][1].includes(s.status)).length;
     $('#sent-tabs').innerHTML = Object.entries(groups).map(([k, [l]]) => `<button role="tab" data-filter="${k}" class="${S.sentFilter === k ? 'on' : ''}">${l}<small>${count(k)}</small></button>`).join('');
     const q = $('#sent-search').value.trim().toLowerCase();
@@ -567,7 +567,7 @@
       (!q || s.group.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q)));
     $('#sent-table tbody').innerHTML = rows.length ? rows.map(s => `<tr data-job="${s.jobId}">
       <td class="when">${esc(whenLabel(s.at))}</td><td>${esc(s.group)}</td><td class="msg">${esc(firstLine(s.preview))}</td>
-      <td><span class="gs">${tickHtml(s)}${pill(s.status)}</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
+      <td><span class="gs">${tickHtml(s)}${sendPill(s.status)}</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
       : `<tr class="empty-row"><td colspan="4">${S.sends.length ? 'Nothing matches.' : 'Nothing has been sent yet.'}</td></tr>`;
   }
   $('#sent-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.sentFilter = b.dataset.filter; renderSent(); } });
@@ -1090,14 +1090,15 @@
     const s = S.sync; if (!s) return;
     const ready = S.status?.wa?.status === 'ready';
     const el = $('#sync-detail');
-    el.className = 'sync-detail' + (s.error && !s.running ? ' bad' : '');
+    const st = s.state || (s.running ? 'syncing' : s.error ? 'failed' : s.finishedAt ? 'synced' : 'never');   // the 'sync' state machine
+    el.className = 'sync-detail' + (st === 'failed' ? ' bad' : '');
     el.textContent = !ready && !s.saved ? 'Link a number first. Its groups are synced a minute after it connects.'
-      : s.running ? 'Syncing every group on this number… Large accounts can take a minute or two.'
-      : s.error ? s.error
-      : s.finishedAt ? `${plural(s.saved, 'group')} saved${s.phone ? ` from ${fmtPhone(s.phone)}` : ''}. Last synced ${ago(s.finishedAt)}.`
-      : 'Getting this number’s groups. They appear here a minute after it connects.';
-    $('#wa-sync').disabled = !!s.running || !ready;
-    $('#wa-sync').textContent = s.running ? 'Syncing…' : 'Sync groups now';
+      : { syncing: 'Syncing every group on this number… Large accounts can take a minute or two.',
+          failed: s.error,
+          synced: `${plural(s.saved, 'group')} saved${s.phone ? ` from ${fmtPhone(s.phone)}` : ''}. Last synced ${ago(s.finishedAt)}.`,
+          never: 'Getting this number’s groups. They appear here a minute after it connects.' }[st];
+    $('#wa-sync').disabled = st === 'syncing' || !ready;
+    $('#wa-sync').textContent = st === 'syncing' ? 'Syncing…' : 'Sync groups now';
   }
   function pollQr() {
     clearInterval(S.qrTimer);
@@ -1195,9 +1196,9 @@
         : '<tr class="empty-row"><td colspan="4">No webhooks. Add one below if another system should hear about sends.</td></tr>';
       $('#deliveries-table tbody').innerHTML = h.deliveries.length ? h.deliveries.map(d => `<tr>
         <td class="when">${esc(whenLabel(d.created_at))}</td><td>${esc(EVENT_LABEL[d.event] || d.event)}</td><td class="msg break">${esc(d.url)}</td>
-        <td>${d.status === 'ok' ? `<span class="pill done">Delivered</span>${d.attempts > 1 ? `<span class="hint sub">after ${d.attempts} tries</span>` : ''}`
-          : d.status === 'failed' ? `<span class="pill failed">Gave up</span><span class="err">${esc(d.last_error || '')} · ${d.attempts} tries</span>`
-          : `<span class="pill retry">Retrying</span><span class="hint sub">${esc(d.last_error || 'Sending')} · next ${esc(whenLabel(d.next_at))}</span>`}</td></tr>`).join('')
+        <td>${d.status === 'ok' ? `<span class="pill done" title="${esc(SMx.help('delivery', 'ok'))}">${esc(SMx.label('delivery', 'ok'))}</span>${d.attempts > 1 ? `<span class="hint sub">after ${d.attempts} tries</span>` : ''}`
+          : d.status === 'failed' ? `<span class="pill failed" title="${esc(SMx.help('delivery', 'failed'))}">${esc(SMx.label('delivery', 'failed'))}</span><span class="err">${esc(d.last_error || '')} · ${d.attempts} tries</span>`
+          : `<span class="pill retry" title="${esc(SMx.help('delivery', 'pending'))}">${d.attempts ? 'Retrying' : esc(SMx.label('delivery', 'pending'))}</span><span class="hint sub">${esc(d.last_error || 'Sending')} · next ${esc(whenLabel(d.next_at))}</span>`}</td></tr>`).join('')
         : '<tr class="empty-row"><td colspan="4">Nothing sent yet.</td></tr>';
     } catch (err) { toast(err.message, true); }
   }

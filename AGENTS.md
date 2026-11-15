@@ -86,6 +86,7 @@ The session cookie is `Secure`, so the app must be served over HTTPS (except `lo
 ```
 app/                       WA Box app (Node 22, Express 5, better-sqlite3, vanilla JS front end)
   src/server.js            HTTP: web app, session API (/api/*), mounts the public API
+  src/machines.js          Database checks for the state machines (definitions: public/machines.js)
   src/jobs.js              Validation + createJob(): the ONE way a message gets scheduled (app and API)
   src/scheduler.js         The send loop: lease lock, pacing, limits, duplicate guard, chat check, repeats, digest
   src/wa.js                Client for the engine. Defines definitelyNotSent() (the 4xx contract)
@@ -97,11 +98,12 @@ app/                       WA Box app (Node 22, Express 5, better-sqlite3, vanil
   src/auth.js              Users, sessions, passwords
   src/render.js            {group} {day} {date} (same as public/lib.js)
   src/time.js              India-time helpers
-  public/                  index.html, app.js, lib.js (shared with tests), style.css, openapi.yaml
+  public/                  index.html, app.js, lib.js + machines.js (shared with server and tests), style.css, openapi.yaml
   test/                    scheduler.test.js (fake engine), api.test.js, delights.test.js
 engine/                    WhatsApp engine (whatsapp-web.js + Chrome)
   src/engine.js            Session lifecycle, watchdog, version pin, receipts
   src/server.js            Private HTTP API (X-API-Key)
+  src/states.js            WhatsApp connection state machine (mirrors app/public/machines.js)
   test/engine.test.js      Fake WhatsApp client
 docs/                      API.md, USER-GUIDE.md, screenshots, logo
 media/                     README animations (HyperFrames source); outputs in docs/media/
@@ -117,6 +119,7 @@ docker-compose.local.yml   Local copy (localhost only, always practice mode)
 - **Keep the send contract**: engine `4xx` = definitely not sent; anything else = maybe sent → the app must check the chat (`resolveUncertain`) and never retry blindly.
 - **Every new way to schedule must call `createJob()`** in `app/src/jobs.js`, so limits and validation can't drift.
 - **Write-ahead**: a send is recorded as `sending` before the request leaves; keep it that way.
+- **States are explicit**: every status (message, send, webhook delivery, WhatsApp connection, …) and every allowed change is defined in `app/public/machines.js` ([diagrams](docs/STATE-MACHINES.md)). Add a state or transition there first, use named groups (`SM.inList('send', 'didNotGet')`, `SM.is(...)`, `SM.can(...)`) instead of listing statuses, then run `npm run states:doc`. Tests fail on any status change the machines don't allow. Never rename a stored state.
 - **No silent failure**: anything that doesn't go out must end in a visible status and, where someone must act, an alert (`alerts.raise`).
 - **Front end**: no inline `style=""` or inline scripts (strict CSP). No build step. Keep `public/lib.js` and `src/render.js` in step (a test checks they match).
 - **Copy**: plain, short sentences a non-technical teammate understands. Say what happened and what to do.

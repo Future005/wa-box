@@ -1,5 +1,5 @@
 // Evals for the public API (/api/v1), API keys and webhooks.
-const { test, before, after, beforeEach } = require('node:test');
+const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -36,6 +36,14 @@ before(async () => {
   recvPort = receiver.address().port;
 });
 after(() => { srv.close(); receiver.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
+// Every status change made during a test must be one the state machines allow (public/machines.js).
+// The database records any other change; this fails the test that caused it.
+afterEach(() => {
+  const v = require('../src/machines').violations();
+  db.exec('DELETE FROM state_violations');
+  assert.deepEqual(v.map(x => `${x.machine}: ${x.from_state || '(new)'} -> ${x.to_state}`), [], 'unexpected state change');
+});
+
 beforeEach(() => {
   for (const t of ['jobs', 'sends', 'number_groups', 'numbers', 'group_lists', 'api_keys', 'idempotency', 'webhooks', 'hook_deliveries', 'alert_log']) db.exec(`DELETE FROM ${t}`);
   const now = Date.now();
@@ -174,7 +182,9 @@ test('PATCH and reschedule are refused once a message has started sending', asyn
   const key = newKey();
   const id = (await call('POST', '/messages', { key, body: { text: 'x', groups: ['1@g.us', '2@g.us'], sendAt: tomorrowAt('10:00') } })).body.message.id;
   const j = db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
-  db.prepare("INSERT INTO sends (job_id, occurrence, group_id, group_name, status) VALUES (?,?,?,?, 'sent')").run(id, j.run_at, '1@g.us', 'G1');
+  // The first group went out (written ahead as "sending", then "sent", like the real sender).
+  db.prepare("INSERT INTO sends (job_id, occurrence, group_id, group_name, status) VALUES (?,?,?,?, 'sending')").run(id, j.run_at, '1@g.us', 'G1');
+  db.prepare("UPDATE sends SET status='sent' WHERE job_id=? AND group_id=?").run(id, '1@g.us');
   const r = await call('PATCH', `/messages/${id}`, { key, body: { text: 'changed' } });
   assert.equal(r.status, 409);
   assert.match(r.body.error.message, /started sending/);

@@ -10,6 +10,7 @@ const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db'
 const auth = require('./auth');
 const wa = require('./wa');
 const sched = require('./scheduler');
+const SM = require('./machines');   // state machines: public/machines.js
 const savedGroups = require('./groups');
 const { validateJobInput, checkImageUrl, serializeJob, createJob, UNDO_MS } = require('./jobs');
 const alerts = require('./alerts');
@@ -194,8 +195,8 @@ api.get('/jobs', (req, res) => {
   const view = req.query.view === 'history' ? 'history' : 'upcoming';
   const phone = viewPhone(req) ?? savedGroups.current();
   const rows = view === 'upcoming'
-    ? db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at").all(phone || null)
-    : db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT 100").all(phone || null);
+    ? db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'active')} ORDER BY start_at`).all(phone || null)
+    : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ${SM.inList('job', 'active')} ORDER BY updated_at DESC LIMIT 100`).all(phone || null);
   res.json({ jobs: rows.map(serializeJob) });
 });
 
@@ -273,7 +274,7 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
   // Only while nothing has gone out yet; if it started a moment ago, say so instead of pretending it saved.
   const r = db.prepare(`UPDATE jobs SET title=?,message=?,media_file=?,media_mime=?,media_url=?,link_preview=?,groups_json=?,time_ist=?,run_at=?,start_at=?,gap_min=?,gap_max=?,
     repeat_days=?,note='',updated_by=?,updated_at=? WHERE id=? AND status='scheduled'
-    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ('pending','retry'))`)
+    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ${SM.inList('send', 'waiting')})`)
     .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), Date.now() + UNDO_MS),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
   if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Abort it, or use "Change the rest".'), { status: 409 });
@@ -408,7 +409,7 @@ api.get('/system', requireAdmin, (_req, res) => {
   res.json({ health: sched.health(), issues: alerts.openIssues(),
     alerts: { done: getSetting('alert_done', true), webhook: cfg.webhookUrl ? cfg.webhookUrl.replace(/^(https:\/\/[^/]+\/).+$/, '$1…') : '', webhookSet: !!cfg.webhookUrl, waNumbers: cfg.waNumbers, digest: cfg.digest },
     unconfirmed: db.prepare(`SELECT s.job_id, s.group_id, s.group_name, s.status, s.error, s.attempt_at, j.message FROM sends s JOIN jobs j ON j.id=s.job_id
-      WHERE s.status IN ('unconfirmed','sending','uncertain') ORDER BY s.attempt_at DESC LIMIT 50`).all(),
+      WHERE s.status IN ${SM.inList('send', 'unresolved')} ORDER BY s.attempt_at DESC LIMIT 50`).all(),
     version: process.env.SOURCE_COMMIT || process.env.COOLIFY_SOURCE_COMMIT || 'dev', instance: sched.OWNER });
 });
 api.get('/events', requireAdmin, (req, res) => {

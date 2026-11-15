@@ -11,6 +11,7 @@ const { db } = require('./db');
 const keys = require('./apikeys');
 const savedGroups = require('./groups');
 const sched = require('./scheduler');
+const SM = require('./machines');   // state machines: public/machines.js
 const { validateJobInput, createJob, UNDO_MS } = require('./jobs');
 const { epochToIst } = require('./time');
 
@@ -165,8 +166,8 @@ router.get('/messages', wrap(async (req, res) => {
   const view = req.query.status === 'history' ? 'history' : 'upcoming';
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
   const rows = view === 'upcoming'
-    ? db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at LIMIT ?").all(savedGroups.current() || null, limit * 2)
-    : db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ('scheduled','running') ORDER BY updated_at DESC LIMIT ?").all(savedGroups.current() || null, limit * 2);
+    ? db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'active')} ORDER BY start_at LIMIT ?`).all(savedGroups.current() || null, limit * 2)
+    : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ${SM.inList('job', 'active')} ORDER BY updated_at DESC LIMIT ?`).all(savedGroups.current() || null, limit * 2);
   const allowed = keys.allowedGroupIds(req.key);
   const mine = rows.filter(j => !allowed || JSON.parse(j.groups_json).every(g => allowed.has(g.id))).slice(0, limit);
   res.json({ messages: mine.map(publicMessage) });
@@ -194,7 +195,7 @@ router.delete('/messages/:id', need('schedule'), wrap(async (req, res) => {
   if (req.key.scope !== 'full' && j.created_by !== `api:${req.key.name}`) {
     throw err(403, 'forbidden', 'This key can only cancel messages it scheduled. Use a "full" key to cancel others.');
   }
-  if (!['scheduled', 'running'].includes(j.status)) throw err(409, 'not_active', `This message is already ${j.status.replace(/_/g, ' ')}`);
+  if (!SM.is('job', j.status, 'active')) throw err(409, 'not_active', `This message is already ${SM.label('job', j.status).toLowerCase()}`);
   // ?scope=this skips just this time of a weekly message; default cancels it (and its repeat).
   const scope = req.query.scope === 'this' ? 'this' : 'all';
   if (scope === 'this' && !JSON.parse(j.repeat_days).length) throw err(400, 'invalid_request', 'scope=this is only for weekly messages');
@@ -222,7 +223,7 @@ router.patch('/messages/:id', need('schedule'), wrap(async (req, res) => {
   const now = Date.now();
   const r = db.prepare(`UPDATE jobs SET title=?, message=?, media_url=?, link_preview=?, groups_json=?, time_ist=?, run_at=?, start_at=?, gap_min=?, gap_max=?, repeat_days=?,
     note='', updated_by=?, updated_at=? WHERE id=? AND status='scheduled'
-    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ('pending','retry'))`)
+    AND NOT EXISTS (SELECT 1 FROM sends WHERE job_id=jobs.id AND occurrence=jobs.run_at AND status NOT IN ${SM.inList('send', 'waiting')})`)
     .run(v.title, v.message, v.imageUrl ?? j.media_url, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), now + UNDO_MS),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), `api:${req.key.name}`, now, j.id);
   if (!r.changes) throw err(409, 'not_active', 'It started sending a moment ago, so it was not changed.');

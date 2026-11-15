@@ -1,14 +1,17 @@
 {
   "name": "wabox",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Safe, simple WhatsApp group message scheduler (own whatsapp-web.js engine)",
   "main": "src/server.js",
   "type": "commonjs",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test --test-concurrency=1 test/*.test.js"
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "states:doc": "node scripts/states-doc.js"
   },
   "dependencies": {
     "bcryptjs": "3.0.2",

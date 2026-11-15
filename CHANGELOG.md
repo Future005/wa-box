@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 (15 Nov 2026)
+
+### Explicit state machines
+- Every status in WA Box (message, send to a group, webhook delivery, WhatsApp connection, group sync, number, sending mode, alert, sign-in) is now defined in one place, `app/public/machines.js`, with its words, its meaning and the changes allowed. Server, browser and tests all use it. Diagrams: [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) (generated, checked by a test).
+- The database checks every message, send and webhook status change against the definitions. Tests fail on anything unexpected; in production it's logged once under System → Events and never blocks a send. The engine checks its connection changes the same way.
+- Hover any status in the app to see what it means and what to do.
+
+### Fixed (found by making the states explicit)
+- The **Sent → Problems** tab counted groups that were still retrying or being checked; it now shows only groups that didn't get the message, matching the "done, with errors" count.
+- Groups aborted mid-send showed as "Aborted" on the Sent page instead of "Not sent (aborted)".
+- Progress said "3 of 5 sent" when 2 of those 3 had failed. It now says "1 of 5 sent · 2 didn't get it".
+- "Needs attention" on Today, the morning digest and the System page counted different kinds of problems; they now all count every group that didn't get it (including skipped and duplicate-blocked).
+- Webhook deliveries waiting for their first try showed "Retrying"; they show "Queued".
+- The public API's "already …" error now uses the same words as the app ("already aborted", not "already cancelled").
+
 ## 1.2.0 (3 Nov 2026)
 
 ### Fixed

@@ -206,3 +206,7 @@ test('checking a chat reads WhatsApp Web memory: captions count as text, our mes
   assert.deepEqual(h.map(m => [m.body, m.fromMe]), [['Class at 10', true], ['Quiz at 7', true]]);
   await assert.rejects(() => e.chatHistory('missing@g.us', 5), /not loaded/);
 });
+
+test('every connection change in these tests follows the state machine (src/states.js)', () => {
+  assert.equal(engine.unexpectedTransitions || 0, 0);
+});

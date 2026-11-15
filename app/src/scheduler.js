@@ -22,6 +22,10 @@ const wa = require('./wa');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');
 const hooks = require('./hooks');
+// Which states exist and what counts as what: public/machines.js (see docs/STATE-MACHINES.md).
+const SM = require('./machines');
+const SEND = g => SM.inList('send', g);   // SQL list, e.g. SEND('didNotGet')
+const JOB = g => SM.inList('job', g);
 const { renderMessage } = require('./render');
 // The text a given group actually receives (placeholders filled in).
 const textFor = (job, group) => renderMessage(job.message, { groupName: group.name, at: job.run_at });
@@ -36,7 +40,7 @@ const RECONNECT_EVERY_MS = 5 * 60 * 1000;
 const VERIFY_DELAY_MS = FAST ? 20 : 20 * 1000;
 const BREAKER_THRESHOLD = 3;
 const OWNER = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-const DONE_STATES = ['sent', 'dry_run', 'skipped', 'missed', 'blocked_duplicate', 'unconfirmed'];
+const DONE_STATES = SM.group('send', 'noResend');
 
 const state = {
   wa: { status: 'unknown', phone: null, pushName: null, error: null, checkedAt: 0, since: Date.now() },
@@ -66,8 +70,8 @@ function settings() {
 
 // Limits are per number: each WhatsApp account has its own daily and hourly budget.
 const cur = () => savedGroups.current() || null;
-const sentToday = () => db.prepare("SELECT COUNT(*) n FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.day_key=? AND s.status IN ('sent','sending','uncertain')").get(cur(), istDayKey()).n;
-const sentLastHour = () => db.prepare("SELECT COUNT(*) n, MIN(s.attempt_at) first FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.attempt_at > ? AND s.status IN ('sent','sending','uncertain')").get(cur(), Date.now() - 3600 * 1000);
+const sentToday = () => db.prepare(`SELECT COUNT(*) n FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.day_key=? AND s.status IN ${SEND('usesBudget')}`).get(cur(), istDayKey()).n;
+const sentLastHour = () => db.prepare(`SELECT COUNT(*) n, MIN(s.attempt_at) first FROM sends s JOIN jobs j ON j.id=s.job_id WHERE j.phone IS ? AND s.attempt_at > ? AND s.status IN ${SEND('usesBudget')}`).get(cur(), Date.now() - 3600 * 1000);
 
 // ---------- lease ----------
 function acquireLease() {
@@ -121,7 +125,7 @@ async function refreshWa() {
 
 // ---------- helpers ----------
 const getJob = id => db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
-const jobStillActive = (id, runAt) => { const j = getJob(id); return j && ['scheduled', 'running'].includes(j.status) && (runAt === undefined || j.run_at === runAt); };
+const jobStillActive = (id, runAt) => { const j = getJob(id); return j && SM.is('job', j.status, 'active') && (runAt === undefined || j.run_at === runAt); };
 const getSend = (job, groupId) => db.prepare('SELECT * FROM sends WHERE job_id=? AND occurrence=? AND group_id=?').get(job.id, job.run_at, groupId);
 
 function upsertSend(job, group, fields) {
@@ -138,7 +142,7 @@ function upsertSend(job, group, fields) {
     hooks.emit('group.failed', { message: hookMessage(job), group: { id: group.id, name: group.name }, status: row.status, error: row.error });
   }
 }
-const PROBLEM_STATES = ['failed', 'missed', 'unconfirmed', 'blocked_duplicate', 'skipped'];
+const PROBLEM_STATES = SM.group('send', 'didNotGet');
 const iso = ms => (ms ? new Date(ms).toISOString() : null);
 /** The message as webhooks (and the public API) describe it. */
 function hookMessage(job) {
@@ -186,7 +190,7 @@ async function resolveUncertain(job, group, row, reason) {
 
 /** After a crash/restart: resolve any send that was in flight, by looking at the chat. Never resend blindly. */
 async function recoverInFlight() {
-  const rows = db.prepare("SELECT * FROM sends WHERE status IN ('sending','uncertain')").all();
+  const rows = db.prepare(`SELECT * FROM sends WHERE status IN ${SEND('inFlight')}`).all();
   for (const row of rows) {
     const job = getJob(row.job_id);
     if (!job) continue;
@@ -206,11 +210,11 @@ async function tripBreaker(lastError) {
 function finishOccurrence(job, note = '') {
   job = getJob(job.id);
   const days = JSON.parse(job.repeat_days || '[]');
-  const problems = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('failed','missed','unconfirmed','blocked_duplicate','skipped')").get(job.id, job.run_at).n;
+  const problems = db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ${SEND('didNotGet')}`).get(job.id, job.run_at).n;
   hooks.emit('message.finished', { message: hookMessage(job), status: problems ? 'done_with_errors' : 'done',
     groups: db.prepare('SELECT group_id id, group_name name, status, sent_at, error FROM sends WHERE job_id=? AND occurrence=? ORDER BY id').all(job.id, job.run_at)
       .map(g => ({ id: g.id, name: g.name, status: g.status, sentAt: iso(g.sent_at), error: g.error })) });
-  const sentN = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run')").get(job.id, job.run_at).n;
+  const sentN = db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ${SEND('delivered')}`).get(job.id, job.run_at).n;
   const total = JSON.parse(job.groups_json).length;
   const practice = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status='dry_run'").get(job.id, job.run_at).n > 0;
   if (!problems && sentN) {
@@ -250,7 +254,7 @@ const firstLine = t => (String(t || '').split('\n').find(l => l.trim()) || '').r
 function markMissed(job, reason) {
   for (const g of JSON.parse(job.groups_json)) {
     const ex = getSend(job, g.id);
-    if (!ex || ['pending', 'retry'].includes(ex.status)) upsertSend(job, g, { status: 'missed', error: reason });
+    if (!ex || SM.is('send', ex.status, 'waiting')) upsertSend(job, g, { status: 'missed', error: reason });
   }
   logEvent('warn', 'missed', reason, { jobId: job.id });
   alerts.raise(`missed:${job.id}:${job.run_at}`, 'warn', `“${firstLine(job.message)}” (${formatIst(job.run_at)}) was not sent: ${reason}`).catch(() => {});
@@ -337,7 +341,7 @@ async function runJob(job) {
   for (const group of groups) {
     const existing = getSend(job, group.id);
     if (existing && DONE_STATES.includes(existing.status)) continue;
-    if (existing && ['sending', 'uncertain'].includes(existing.status)) continue; // handled by recovery
+    if (existing && SM.is('send', existing.status, 'inFlight')) continue; // handled by recovery
     if (existing && existing.status === 'failed' && !existing.override) continue;
 
     // Hash of exactly what this group gets, so {group}/{day}/{date} don't defeat the duplicate guard.
@@ -363,7 +367,7 @@ async function runJob(job) {
         return;
       }
       if (!existing?.override && cfg.dedupeHours > 0) {
-        const dupe = db.prepare(`SELECT s.job_id, s.sent_at, s.attempt_at FROM sends s WHERE s.group_id=? AND s.msg_hash=? AND s.status IN ('sent','sending','uncertain','unconfirmed')
+        const dupe = db.prepare(`SELECT s.job_id, s.sent_at, s.attempt_at FROM sends s WHERE s.group_id=? AND s.msg_hash=? AND s.status IN ${SEND('mayHaveReached')}
           AND COALESCE(s.sent_at, s.attempt_at) > ? AND NOT (s.job_id=? AND s.occurrence=?) LIMIT 1`).get(group.id, msgHash, Date.now() - cfg.dedupeHours * 3600 * 1000, job.id, job.run_at);
         if (dupe) {
           const when = formatIst(dupe.sent_at || dupe.attempt_at);
@@ -410,13 +414,13 @@ async function maybeDigest(ready) {
   const t = epochToIst(Date.now());
   if (t.time < '08:30' || t.time > '10:00') return;
   const start = Date.now(), end = nextIstMidnight();
-  const jobs = db.prepare("SELECT groups_json FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND start_at < ?").all(cur(), end);
+  const jobs = db.prepare(`SELECT groups_json FROM jobs WHERE phone IS ? AND status IN ${JOB('active')} AND start_at < ?`).all(cur(), end);
   const groups = jobs.reduce((n, j) => n + JSON.parse(j.groups_json).length, 0);
-  const fails = db.prepare("SELECT COUNT(*) n FROM sends WHERE status IN ('failed','unconfirmed','missed') AND COALESCE(sent_at, attempt_at, occurrence) > ?").get(start - 24 * 3600 * 1000).n;
+  const fails = db.prepare(`SELECT COUNT(*) n FROM sends WHERE status IN ${SEND('didNotGet')} AND COALESCE(sent_at, attempt_at, occurrence) > ?`).get(start - 24 * 3600 * 1000).n;
   const cfg = settings();
   const lines = [];
   if (t.dow === 1) {   // Monday: the week ahead
-    const week = db.prepare("SELECT message, groups_json, run_at FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND run_at < ? ORDER BY run_at").all(cur(), start + 7 * 86400000);
+    const week = db.prepare(`SELECT message, groups_json, run_at FROM jobs WHERE phone IS ? AND status IN ${JOB('active')} AND run_at < ? ORDER BY run_at`).all(cur(), start + 7 * 86400000);
     lines.push('', `This week (${week.length}):`, ...(week.length ? week.map(j => `• ${formatIst(j.run_at)} · ${firstLine(j.message)} · ${JSON.parse(j.groups_json).length} groups`) : ['• Nothing scheduled yet']));
   }
   const summary = [
@@ -448,8 +452,8 @@ async function pollReceipts() {
 /** Stop a message before its first group gets it. A weekly message skips just this time. */
 function undo(jobId, by) {
   const job = getJob(jobId);
-  if (!job || !['scheduled', 'running'].includes(job.status)) throw new Error('This message is not waiting to go out');
-  const started = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ('pending','retry')").get(job.id, job.run_at).n;
+  if (!job || !SM.is('job', job.status, 'active')) throw new Error('This message is not waiting to go out');
+  const started = db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ${SEND('waiting')}`).get(job.id, job.run_at).n;
   if (started) throw new Error('It has already started sending. Use Stop instead.');
   const days = JSON.parse(job.repeat_days || '[]');
   if (days.length) {
@@ -468,9 +472,9 @@ function undo(jobId, by) {
 const UNDO_GRACE_MS = 30 * 1000;
 const unsentGroups = job => {
   const byId = new Map(db.prepare('SELECT group_id, status FROM sends WHERE job_id=? AND occurrence=?').all(job.id, job.run_at).map(r => [r.group_id, r.status]));
-  return JSON.parse(job.groups_json).filter(g => !byId.has(g.id) || ['pending', 'retry'].includes(byId.get(g.id)));
+  return JSON.parse(job.groups_json).filter(g => !byId.has(g.id) || SM.is('send', byId.get(g.id), 'waiting'));
 };
-const sentCount = job => db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run','sending','uncertain')").get(job.id, job.run_at).n;
+const sentCount = job => db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ${SEND('reachedOrReaching')}`).get(job.id, job.run_at).n;
 
 // When someone stops a message mid-send, a group can be in its "typing…" pause at that moment.
 // The sender then backs off, so recount once it has, so the note says exactly who got it.
@@ -480,7 +484,7 @@ function refreshStopNote(job) {
   const oneOff = j.status === 'cancelled' && /^Aborted by /.test(j.note);
   const thisTime = j.note.startsWith(`Aborted ${formatIst(job.run_at)} only`);
   if (!oneOff && !thisTime) return;
-  const got = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('sent','dry_run','uncertain')").get(job.id, job.run_at).n;
+  const got = db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ${SEND('probablyGotIt')}`).get(job.id, job.run_at).n;
   db.prepare('UPDATE jobs SET note=? WHERE id=?')
     .run(j.note.replace(/(\d+) of (\d+) (had )?got it/, (m, _n, total, had) => `${got} of ${total} ${had || ''}got it`), job.id);
 }
@@ -494,7 +498,7 @@ function refreshStopNote(job) {
  */
 function cancelJob(jobId, by, scope = 'all') {
   const job = getJob(jobId);
-  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
+  if (!job || !SM.is('job', job.status, 'active')) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
   const days = JSON.parse(job.repeat_days || '[]');
   const sent = sentCount(job);
   const waiting = unsentGroups(job);
@@ -523,7 +527,7 @@ function cancelJob(jobId, by, scope = 'all') {
 function rescheduleJob(jobId, by, { date, time, scope = 'this' }) {
   const job = getJob(jobId);
   if (!job || job.status !== 'scheduled') throw Object.assign(new Error('Only messages that are waiting can be rescheduled'), { status: 409 });
-  if (sentCount(job) || db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ('pending','retry')").get(job.id, job.run_at).n) {
+  if (sentCount(job) || db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ${SEND('waiting')}`).get(job.id, job.run_at).n) {
     throw Object.assign(new Error('It has already started sending, so it can\'t be rescheduled. Abort it, or use "Change the rest".'), { status: 409 });
   }
   let runAt;
@@ -542,7 +546,7 @@ function rescheduleJob(jobId, by, { date, time, scope = 'this' }) {
 /** Stop a message that is sending and hand back the groups that haven't got it, to send something else to them. */
 function splitRest(jobId, by) {
   const job = getJob(jobId);
-  if (!job || !['scheduled', 'running'].includes(job.status)) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
+  if (!job || !SM.is('job', job.status, 'active')) throw Object.assign(new Error('This message is not waiting to go out any more, so there is nothing to abort'), { status: 409 });
   const rest = unsentGroups(job);
   const r = cancelJob(jobId, by, JSON.parse(job.repeat_days || '[]').length ? 'this' : 'all');
   return { ...r, groups: rest };
@@ -554,6 +558,7 @@ async function tick() {
   state.busy = true;
   try {
     state.lastTickAt = Date.now();
+    SM.report();   // any status change the state machines don't allow: logged once, never blocking
     const ready = await refreshWa();
     if (!acquireLease()) return;
     if (ready) await recoverInFlight();
@@ -563,10 +568,10 @@ async function tick() {
     const now = Date.now();
     // A number that isn't linked keeps its messages waiting. Past the late limit they can't go out
     // on time any more, so they're marked missed (a weekly one carries on next week) with the reason.
-    for (const j of db.prepare("SELECT * FROM jobs WHERE phone IS NOT ? AND status IN ('scheduled','running') AND start_at <= ?").all(cur(), now - cfg.maxLateMin * 60000)) {
+    for (const j of db.prepare(`SELECT * FROM jobs WHERE phone IS NOT ? AND status IN ${JOB('active')} AND start_at <= ?`).all(cur(), now - cfg.maxLateMin * 60000)) {
       markMissed(j, `+${j.phone || '?'} wasn't the linked number at that time`);
     }
-    const due = db.prepare("SELECT * FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') AND start_at <= ? ORDER BY start_at, id LIMIT 1").get(cur(), now);
+    const due = db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${JOB('active')} AND start_at <= ? ORDER BY start_at, id LIMIT 1`).get(cur(), now);
     if (!due) return;
     if (now - due.start_at > cfg.maxLateMin * 60000) {
       markMissed(due, `more than ${cfg.maxLateMin} min late (the server or WhatsApp was offline)`);
@@ -592,7 +597,7 @@ async function tick() {
 const MEDIA_KEEP_MS = 3 * 24 * 3600 * 1000;
 function purgeMedia(now = Date.now()) {
   const dir = path.join(DATA_DIR, 'media');
-  const jobs = db.prepare("SELECT id, media_file FROM jobs WHERE media_file IS NOT NULL AND status IN ('done','done_with_errors','cancelled') AND updated_at < ?").all(now - MEDIA_KEEP_MS);
+  const jobs = db.prepare(`SELECT id, media_file FROM jobs WHERE media_file IS NOT NULL AND status IN ${JOB('final')} AND updated_at < ?`).all(now - MEDIA_KEEP_MS);
   for (const j of jobs) {
     try { fs.rmSync(path.join(dir, j.media_file), { force: true }); } catch { /* already gone */ }
     db.prepare('UPDATE jobs SET media_file=NULL, media_purged=1 WHERE id=?').run(j.id);
@@ -638,23 +643,23 @@ function currentRow(jobId, groupId) {
 }
 function markSent(jobId, groupId, by) {
   const { job, row } = currentRow(jobId, groupId);
-  if (!['unconfirmed', 'failed'].includes(row.status)) throw new Error('Only unconfirmed or failed sends can be marked as sent');
+  if (!SM.can('send', row.status, 'mark_sent')) throw new Error('Only unconfirmed or failed sends can be marked as sent');
   db.prepare("UPDATE sends SET status='sent', sent_at=COALESCE(sent_at, attempt_at, ?), error=? WHERE id=?").run(Date.now(), `Marked as sent by ${by}`, row.id);
   alerts.clear(`unconfirmed:${jobId}:${groupId}`).catch(() => {});
   logEvent('info', 'manual', `${by} confirmed it was sent`, { jobId, group: row.group_name });
   if (job.status === 'done_with_errors') {
-    const left = db.prepare("SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ('failed','missed','unconfirmed','blocked_duplicate','skipped')").get(jobId, row.occurrence).n;
+    const left = db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status IN ${SEND('didNotGet')}`).get(jobId, row.occurrence).n;
     if (!left) db.prepare("UPDATE jobs SET status='done' WHERE id=?").run(jobId);
   }
 }
 function sendAgain(jobId, groupId, by) {
   const { job, row } = currentRow(jobId, groupId);
-  if (!['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(row.status)) throw new Error('This group already got it');
+  if (!SM.can('send', row.status, 'send_again')) throw new Error('This group already got it');
   if (JSON.parse(job.repeat_days).length && row.occurrence !== job.run_at) throw new Error('This weekly message has moved on to its next date. Use "Duplicate" to send it again.');
-  if (!['done', 'done_with_errors', 'running', 'scheduled'].includes(job.status)) throw new Error('This message was cancelled. Use "Duplicate" to send it again.');
+  if (!SM.is('job', job.status, 'canSendAgain')) throw new Error('This message was aborted. Use "Duplicate" to send it again.');
   if (job.media_purged) throw new Error('Its image was already deleted from WA Box. Use "Duplicate" and attach the image again.');
   db.prepare("UPDATE sends SET status='retry', attempts=0, override=1, error=? WHERE id=?").run(`Send again requested by ${by}`, row.id);
-  if (['done', 'done_with_errors'].includes(job.status)) {
+  if (SM.can('job', job.status, 'send_again')) {
     db.prepare("UPDATE jobs SET status='running', run_at=?, start_at=?, note=?, updated_at=? WHERE id=?").run(row.occurrence, Date.now(), `Sending again to ${row.group_name}`, Date.now(), jobId);
   }
   alerts.clear(`unconfirmed:${jobId}:${groupId}`).catch(() => {});
@@ -664,15 +669,15 @@ function sendAgain(jobId, groupId, by) {
 function health() {
   const now = Date.now();
   const cfg = settings();
-  const next = db.prepare("SELECT id, start_at FROM jobs WHERE phone IS ? AND status IN ('scheduled','running') ORDER BY start_at LIMIT 1").get(cur());
+  const next = db.prepare(`SELECT id, start_at FROM jobs WHERE phone IS ? AND status IN ${JOB('active')} ORDER BY start_at LIMIT 1`).get(cur());
   const day = 24 * 3600 * 1000;
-  const fail24 = db.prepare("SELECT COUNT(*) n FROM sends WHERE status IN ('failed','unconfirmed','missed') AND COALESCE(sent_at, attempt_at, occurrence) > ?").get(now - day).n;
+  const fail24 = db.prepare(`SELECT COUNT(*) n FROM sends WHERE status IN ${SEND('didNotGet')} AND COALESCE(sent_at, attempt_at, occurrence) > ?`).get(now - day).n;
   const sent24 = db.prepare("SELECT COUNT(*) n FROM sends WHERE status='sent' AND sent_at > ?").get(now - day).n;
   return {
     scheduler: { ok: now - state.lastTickAt < 3 * TICK_MS + 60000, lastTickAt: state.lastTickAt, leader: state.leader, busy: state.busy, startedAt: state.startedAt },
     whatsapp: { status: state.wa.status, since: state.wa.since, phone: state.wa.phone, name: state.wa.pushName, error: state.wa.error },
     lastSuccessAt: state.lastSuccessAt, nextJob: next || null, sent24, fail24,
-    queue: db.prepare("SELECT COUNT(*) n FROM jobs WHERE status IN ('scheduled','running')").get().n,
+    queue: db.prepare(`SELECT COUNT(*) n FROM jobs WHERE status IN ${JOB('active')}`).get().n,
     consecutiveFailures: state.consecutiveFailures, settings: cfg,
   };
 }

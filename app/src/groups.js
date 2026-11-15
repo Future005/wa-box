@@ -4,6 +4,7 @@
 // Link it again later and everything is back. Groups are read from WhatsApp only on sync.
 const { db, getSetting, setSetting, audit, addColumn } = require('./db');
 const wa = require('./wa');
+const ACTIVE = require('./machines').inList('job', 'active');   // see public/machines.js
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS wa_groups (
@@ -92,7 +93,7 @@ function switchTo(phone, { name = '', by = 'system' } = {}) {
   const alerts = require('./alerts');
   alerts.clear(`number_waiting:${phone}`, `+${phone} is linked again. Its scheduled messages will go out.`).catch(() => {});
   if (prev) {
-    const waiting = db.prepare("SELECT COUNT(*) n FROM jobs WHERE phone=? AND status IN ('scheduled','running')").get(prev).n;
+    const waiting = db.prepare(`SELECT COUNT(*) n FROM jobs WHERE phone=? AND status IN ${ACTIVE}`).get(prev).n;
     if (waiting) alerts.raise(`number_waiting:${prev}`, 'warn', `${waiting} scheduled message${waiting === 1 ? ' is' : 's are'} waiting for +${prev}, which isn't linked now. Link it again to send ${waiting === 1 ? 'it' : 'them'}, or open ${waiting === 1 ? 'it' : 'them'} (switch to +${prev} at the top left) to abort. Anything more than the late limit past its time is marked missed.`).catch(() => {});
   }
 }
@@ -103,7 +104,7 @@ function numbers() {
   return db.prepare('SELECT * FROM numbers ORDER BY last_linked_at DESC').all().map(n => ({
     phone: n.phone, name: n.name, current: n.phone === current(), lastLinkedAt: n.last_linked_at, firstLinkedAt: n.first_linked_at,
     groups: count(n.phone),
-    upcoming: db.prepare("SELECT COUNT(*) n FROM jobs WHERE phone=? AND status IN ('scheduled','running')").get(n.phone).n,
+    upcoming: db.prepare(`SELECT COUNT(*) n FROM jobs WHERE phone=? AND status IN ${ACTIVE}`).get(n.phone).n,
   }));
 }
 
@@ -180,7 +181,7 @@ function keepInStep(linkedPhone, { canSync = true, name: pushName = '' } = {}) {
 function warnAboutMissingGroups() {
   const alerts = require('./alerts');
   const active = new Set(list().map(g => g.id));
-  const affected = db.prepare("SELECT id, title, message, groups_json FROM jobs WHERE phone = ? AND status IN ('scheduled','running')").all(current())
+  const affected = db.prepare(`SELECT id, title, message, groups_json FROM jobs WHERE phone = ? AND status IN ${ACTIVE}`).all(current())
     .filter(j => JSON.parse(j.groups_json).some(g => !active.has(g.id)));
   if (!affected.length) { alerts.clear('groups_missing').catch(() => {}); return; }
   const names = affected.slice(0, 3).map(j => `“${(j.title || j.message.split('\n')[0]).slice(0, 40)}”`).join(', ');
@@ -190,7 +191,10 @@ function warnAboutMissingGroups() {
 function status(p) {
   p = pick(p);
   const mine = sync.phone === p || (!sync.phone && p === current());
-  return { running: mine && sync.running, startedAt: mine ? sync.startedAt : 0, finishedAt: syncedAt(p), error: mine ? sync.error : null, total: mine ? sync.total : 0,
+  const running = mine && sync.running, error = mine ? sync.error : null, finishedAt = syncedAt(p);
+  // The 'sync' state machine (public/machines.js): never → syncing → synced | failed → syncing …
+  const state = running ? 'syncing' : error ? 'failed' : finishedAt ? 'synced' : 'never';
+  return { state, running, startedAt: mine ? sync.startedAt : 0, finishedAt, error, total: mine ? sync.total : 0,
     saved: count(p), phone: p, current: p === current(), by: mine ? sync.by : null };
 }
 

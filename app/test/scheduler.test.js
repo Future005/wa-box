@@ -1,7 +1,7 @@
 // Evals for the send loop. Each test acts out one way things go wrong in real life
 // and checks that WA Box neither double-sends nor fails silently.
 // Runs during the Docker build: if any test fails, the deploy fails and the old version keeps running.
-const { test, before, beforeEach, after } = require('node:test');
+const { test, before, beforeEach, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -87,6 +87,14 @@ before(async () => {
   sched = require('../src/scheduler');
 });
 after(() => { server.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
+// Every status change made during a test must be one the state machines allow (public/machines.js).
+// The database records any other change; this fails the test that caused it.
+afterEach(() => {
+  const v = require('../src/machines').violations();
+  db.exec('DELETE FROM state_violations');
+  assert.deepEqual(v.map(x => `${x.machine}: ${x.from_state || '(new)'} -> ${x.to_state}`), [], 'unexpected state change');
+});
+
 beforeEach(() => {
   for (const t of ['sends', 'jobs', 'number_groups', 'numbers', 'events', 'alert_log', 'locks', 'group_lists', 'webhooks', 'hook_deliveries']) db.exec(`DELETE FROM ${t}`);
   Object.assign(gw, { delivered: [], behaviour: {}, calls: {}, status: 'ready', acks: {}, hooks: [], onTyping: null, phone: '919000000000', waGroups: null, groupsError: null });

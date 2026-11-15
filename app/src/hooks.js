@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS hook_deliveries (
 );
 CREATE INDEX IF NOT EXISTS hook_due ON hook_deliveries(status, next_at);
 `);
+require('./machines').install();   // webhook deliveries follow the 'delivery' state machine
 
 const EVENTS = ['message.started', 'message.finished', 'group.failed'];
 const BACKOFF_MS = [60e3, 5 * 60e3, 30 * 60e3, 2 * 3600e3, 6 * 3600e3];   // then give up
