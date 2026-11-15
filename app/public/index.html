@@ -143,8 +143,11 @@
 
             <fieldset class="block">
               <div class="block-head"><h2>Message</h2>
-                <span class="block-meta"><button type="button" class="link" id="tpl-load">Use a template</button></span>
+                <span class="block-meta"><button type="button" class="link" id="tpl-load">All templates</button></span>
               </div>
+              <div class="tpl-bar" id="tpl-bar" aria-live="polite"></div>
+              <label class="fld name-fld"><span>Name <small>optional · only your team sees it</small></span>
+                <input id="title" maxlength="80" autocomplete="off" placeholder="e.g. Saturday class reminder"></label>
               <div class="editor">
                 <div class="toolbar" role="toolbar" aria-label="WhatsApp formatting">
                   <button type="button" data-wrap="*" title="Bold (*text*)"><b>B</b></button>

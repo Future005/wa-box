@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 
-const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db');
+const { db, DATA_DIR, getSetting, setSetting, audit, logEvent, addColumn } = require('./db');
 const auth = require('./auth');
 const wa = require('./wa');
 const sched = require('./scheduler');
@@ -257,6 +257,7 @@ api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
   const v = await validateJobInput(req.body);
   if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
   const id = createJob(v, { createdBy: req.user.username, media: saveMedia(req.file) });
+  if (req.body.templateId) db.prepare('UPDATE templates SET uses = uses + 1 WHERE id=?').run(Number(req.body.templateId));   // most-used templates show first
   res.json({ ok: true, id });
 }));
 
@@ -329,13 +330,29 @@ api.get('/jobs/:id/image', (req, res) => {
 });
 
 // ---------- templates ----------
-api.get('/templates', (_req, res) => res.json({ templates: db.prepare('SELECT id,name,message,created_by FROM templates ORDER BY name').all() }));
-api.post('/templates', wrap(async (req, res) => {
-  const name = String(req.body?.name || '').trim().slice(0, 60);
-  const message = String(req.body?.message || '').trim();
+// Templates are shared by the team. "uses" counts messages scheduled from one, so the most used
+// show first in the compose screen.
+addColumn('templates', 'uses', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('templates', 'updated_at', 'INTEGER');
+addColumn('templates', 'updated_by', 'TEXT');
+const tplInput = body => {
+  const name = String(body?.name || '').trim().slice(0, 60);
+  const message = String(body?.message || '').trim();
   if (!name || !message) throw bad('Name and message are required');
   if (message.length > 4000) throw bad('Message is too long');
-  db.prepare('INSERT INTO templates(name,message,created_by,created_at) VALUES(?,?,?,?)').run(name, message, req.user.username, Date.now());
+  return { name, message };
+};
+api.get('/templates', (_req, res) => res.json({ templates: db.prepare('SELECT id,name,message,created_by,uses,updated_at,updated_by FROM templates ORDER BY name COLLATE NOCASE').all() }));
+api.post('/templates', wrap(async (req, res) => {
+  const { name, message } = tplInput(req.body);
+  const id = db.prepare('INSERT INTO templates(name,message,created_by,created_at) VALUES(?,?,?,?)').run(name, message, req.user.username, Date.now()).lastInsertRowid;
+  res.json({ ok: true, id: Number(id) });
+}));
+api.put('/templates/:id', wrap(async (req, res) => {
+  const { name, message } = tplInput(req.body);
+  const r = db.prepare('UPDATE templates SET name=?, message=?, updated_at=?, updated_by=? WHERE id=?').run(name, message, Date.now(), req.user.username, Number(req.params.id));
+  if (!r.changes) throw Object.assign(new Error('Template not found'), { status: 404 });
+  audit(req.user.username, 'template_edit', name);
   res.json({ ok: true });
 }));
 api.delete('/templates/:id', wrap(async (req, res) => {

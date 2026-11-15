@@ -27,7 +27,7 @@
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   const who = u => String(u || '').startsWith('api:') ? `${u.slice(4)} (API)` : u;
   // Placeholders shown filled in for the first group, so lists don't read "{day} Live Class".
-  const jobName = j => j.title || firstLine(renderMessage(j.message, j.groups?.[0]?.name || '', j.runAt || Date.now())) || `Message #${j.id}`;
+  const jobName = j => j.title || firstLine(renderMessage(j.message, j.groups?.length === 1 ? j.groups[0].name : '[group]', j.runAt || Date.now())) || `Message #${j.id}`;
   const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
     del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } } };
@@ -581,23 +581,30 @@
   // ============ Templates ============
   async function renderTemplates() {
     await loadTemplates();
-    $('#tpl-list').innerHTML = S.templates.length ? S.templates.map(t => `<article class="card"><h3>${esc(t.name)}</h3>
-      <div class="body">${waFormat(t.message)}</div><span class="meta">Saved by ${esc(t.created_by)}</span>
-      <div class="btn-row"><a class="btn btn-primary btn-sm" href="#compose?tpl=${t.id}">Use</a><button class="btn btn-danger-ghost btn-sm" data-del="${t.id}" type="button">Delete</button></div></article>`).join('')
+    $('#tpl-list').innerHTML = S.templates.length ? tplOrder().map(t => `<article class="card"><h3>${esc(t.name)}</h3>
+      <div class="body">${waFormat(t.message)}</div><span class="meta">${t.uses ? `Used ${plural(t.uses, 'time')} · ` : ''}${t.updated_by ? `Edited by ${esc(who(t.updated_by).split('@')[0])} ${esc(ago(t.updated_at))}` : `Saved by ${esc(who(t.created_by).split('@')[0])}`}</span>
+      <div class="btn-row"><a class="btn btn-primary btn-sm" href="#compose?tpl=${t.id}">Use</a><button class="btn btn-ghost btn-sm" data-edit="${t.id}" type="button">Edit</button><button class="btn btn-danger-ghost btn-sm" data-del="${t.id}" type="button">Delete</button></div></article>`).join('')
       : `<div class="empty"><b>No templates yet</b><p>Save a message as a template while writing it, or create one here.</p><button class="btn btn-primary" type="button" data-new>New template</button></div>`;
   }
-  async function newTemplate(message = '') {
-    const ok = await dialog({ title: 'Save as template', ok: 'Save template',
+  /** New template (no `existing`) or edit one. Returns the template id, or null if cancelled. */
+  async function newTemplate(message = '', existing = null, suggestedName = '') {
+    const ok = await dialog({ title: existing ? 'Edit template' : 'Save as template', ok: existing ? 'Save changes' : 'Save template',
       html: `<label class="fld"><span>Name</span><input id="tpl-name" maxlength="60" placeholder="e.g. Weekend class reminder"></label>
-             <label class="fld"><span>Message</span><textarea id="tpl-msg" rows="7" maxlength="4000"></textarea></label>`,
-      onOpen: () => { $('#tpl-msg').value = message; $('#tpl-name').focus(); } });
-    if (!ok) return false;
-    try { await api('templates', { method: 'POST', body: { name: $('#tpl-name').value, message: $('#tpl-msg').value } }); toast('Template saved'); return true; }
-    catch (err) { toast(err.message, true); return false; }
+             <label class="fld"><span>Message</span><textarea id="tpl-msg" rows="7" maxlength="4000"></textarea></label>
+             ${existing ? '<p class="hint">Messages already scheduled from it don\'t change.</p>' : ''}`,
+      onOpen: () => { $('#tpl-msg').value = existing ? existing.message : message; $('#tpl-name').value = existing ? existing.name : suggestedName; $('#tpl-name').focus(); } });
+    if (!ok) return null;
+    const body = { name: $('#tpl-name').value, message: $('#tpl-msg').value };
+    try {
+      if (existing) { await api('templates/' + existing.id, { method: 'PUT', body }); toast('Template saved'); await loadTemplates(); return existing.id; }
+      const r = await api('templates', { method: 'POST', body }); toast('Template saved'); await loadTemplates(); return r.id;
+    } catch (err) { toast(err.message, true); return null; }
   }
   $('#tpl-new').addEventListener('click', async () => { if (await newTemplate()) renderTemplates(); });
   $('#tpl-list').addEventListener('click', async e => {
     if (e.target.closest('[data-new]')) { if (await newTemplate()) renderTemplates(); return; }
+    const ed = e.target.closest('[data-edit]');
+    if (ed) { if (await newTemplate('', S.templates.find(t => String(t.id) === ed.dataset.edit))) renderTemplates(); return; }
     const d = e.target.closest('[data-del]'); if (!d) return;
     if (await dialog({ title: 'Delete this template?', html: '<p>Messages already scheduled from it are not affected.</p>', ok: 'Delete', danger: true })) {
       try { await api('templates/' + d.dataset.del, { method: 'DELETE' }); toast('Template deleted'); renderTemplates(); } catch (err) { toast(err.message, true); }
@@ -652,7 +659,7 @@
   const DRAFT_KEY = 'wabox.draft.v1';
   function blankCompose() {
     const last = store.get('wabox.lastTime') || '10:00';
-    return { mode: 'new', id: null, picked: new Map(), message: '', date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
+    return { mode: 'new', id: null, picked: new Map(), message: '', title: '', templateId: null, date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
       gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, imageLink: null, linkPreview: true, dirty: false, search: '' };
   }
   async function openCompose() {
@@ -660,7 +667,7 @@
     const p = S.params;
     // New messages (and copies) go from the number in use; editing keeps the message's own number.
     if (!p.edit && viewingAway()) { S.viewPhone = null; renderNumberSwitch(); refreshStatus(); }
-    await Promise.all([loadGroups(), loadLists()]);
+    await Promise.all([loadGroups(), loadLists(), loadTemplates()]);
     let c = blankCompose(); let note = '';
     const fromJob = id => findJob(Number(id));
     if (p.edit || p.dup || p.again) {
@@ -669,7 +676,7 @@
       if (p.edit && j.status !== 'scheduled') { toast("This message has started sending, so it can't be edited. You can duplicate it.", true); location.hash = `compose?dup=${j.id}`; return; }
       c.mode = p.edit ? 'edit' : 'dup'; c.id = p.edit ? j.id : null;
       if (p.again) c.mode = 'again';
-      c.message = j.message; j.groups.forEach(g => c.picked.set(g.id, { id: g.id, name: g.name }));
+      c.message = j.message; c.title = j.title || ''; j.groups.forEach(g => c.picked.set(g.id, { id: g.id, name: g.name }));
       c.imageLink = j.imageUrl || null; c.linkPreview = j.linkPreview;
       if (p.edit) { c.date = j.date; c.time = j.time; c.repeat = [...j.repeatDays]; c.keepImage = j.hasImage; c.imageUrl = j.hasImage ? `api/jobs/${j.id}/image` : null; }
       else { c.time = j.time; c.repeat = [...j.repeatDays]; }
@@ -689,7 +696,7 @@
         if (istEpoch(c.date, c.time) < Date.now()) c.date = ist(Date.now() + DAY).date;
         note = 'Draft restored.';
       }
-      if (p.tpl) { await loadTemplates(); const t = S.templates.find(x => String(x.id) === p.tpl); if (t) { c.message = t.message; note = `Started from template "${t.name}".`; } }
+      if (p.tpl) { const t = S.templates.find(x => String(x.id) === p.tpl); if (t) { c.message = t.message; c.templateId = t.id; c.title = c.title || t.name; } }
       if (p.list) { const l = S.lists.find(x => String(x.id) === p.list); if (l) { c.picked = new Map(l.groups.map(g => [g.id, g])); note = `Groups from "${l.name}".`; } }
     }
     S.compose = c;
@@ -699,7 +706,7 @@
     $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
     $('#job-error').textContent = '';
     $('#group-search').value = '';
-    $('#message').value = c.message;
+    $('#message').value = c.message; $('#title').value = c.title || '';
     $('#date').value = c.date; $('#time').value = c.time;
     $('#image').value = '';
     $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax;
@@ -708,12 +715,12 @@
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
     $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : c.mode === 'edit' ? 'Discard changes' : 'Back';
     c.pvIdx = 0;
-    renderPicker(); renderDayChips(); renderPace(); renderImage(); updateCompose();
+    renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); updateCompose();
     if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
   }
   function markDirty() {
     const c = C(); if (!c) return; c.dirty = true;
-    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, imageLink: c.imageLink, linkPreview: c.linkPreview });
+    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, title: c.title, templateId: c.templateId, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, imageLink: c.imageLink, linkPreview: c.linkPreview });
     updateCompose();
   }
   $('#draft-note').addEventListener('click', e => { if (e.target.id === 'draft-clear') { store.del(DRAFT_KEY); S.params = {}; openCompose(); } });
@@ -777,7 +784,7 @@
   });
 
   // message
-  $('#message').addEventListener('input', e => { C().message = e.target.value; markDirty(); });
+  $('#message').addEventListener('input', e => { C().message = e.target.value; markDirty(); if (C().templateId) renderTplBar(); });
   $('#message').addEventListener('keydown', e => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === 'Enter') { e.preventDefault(); if (!$('#job-submit').disabled) form.requestSubmit(); return; }
@@ -852,20 +859,61 @@
   $('#tpl-save').addEventListener('click', async () => {
     const m = $('#message').value.trim();
     if (!m) { toast('Write the message first', true); return; }
-    await newTemplate(m);
+    const id = await newTemplate(m, null, C().title || '');
+    if (id) { C().templateId = id; renderTplBar(); markDirty(); }   // now linked: later edits can update it
   });
-  $('#tpl-load').addEventListener('click', async () => {
+  // ---- templates while writing: most-used as one-tap chips, the rest in a searchable picker ----
+  const tplOrder = () => S.templates.slice().sort((a, b) => (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name));
+  function renderTplBar() {
+    const c = C(); if (!c) return; const bar = $('#tpl-bar');
+    const t = c.templateId && S.templates.find(x => x.id === c.templateId);
+    if (t) {
+      const changed = c.message.trim() !== t.message.trim();
+      bar.innerHTML = `<span class="tpl-from">From template <b>${esc(t.name)}</b>${changed ? ' · edited' : ''}</span>
+        ${changed ? '<button type="button" class="link" data-tpl-act="update">Update the template</button>' : ''}
+        <button type="button" class="link" data-tpl-act="detach">Unlink</button>`;
+    } else if (S.templates.length && c.mode !== 'edit') {
+      const top = tplOrder().slice(0, 5);
+      bar.innerHTML = `<span class="tpl-label">Start from</span>${top.map(x => `<button type="button" class="tchip" data-tpl="${x.id}" title="${esc(firstLine(x.message))}">${esc(x.name)}</button>`).join('')}${S.templates.length > top.length ? `<button type="button" class="link" data-tpl-act="all">All ${S.templates.length}…</button>` : ''}`;
+    } else bar.innerHTML = '';
+  }
+  async function applyTemplate(t) {
+    const c = C();
+    if (c.message.trim() && c.message.trim() !== t.message.trim() && !await dialog({ title: 'Replace your message?', html: '<p>The text you wrote will be replaced by the template.</p>', ok: 'Replace' })) return;
+    c.message = t.message; c.templateId = t.id; if (!c.title.trim()) c.title = t.name;
+    $('#message').value = c.message; $('#title').value = c.title; markDirty(); renderTplBar();
+    $('#message').focus({ preventScroll: true });
+  }
+  async function pickTemplate() {
     await loadTemplates();
     if (!S.templates.length) { toast('No templates yet. Write a message and press “Save as template”.'); return; }
     let chosen = null;
-    await dialog({ title: 'Use a template', ok: null, cancel: 'Close',
-      html: `<div class="dlg-picker">${S.templates.map(t => `<button type="button" class="tpl-opt" data-id="${t.id}"><b>${esc(t.name)}</b><span>${esc(firstLine(t.message))}</span></button>`).join('')}</div>`,
-      onOpen: d => { $('#dialog-content').onclick = e => { const b = e.target.closest('.tpl-opt'); if (b) { chosen = S.templates.find(t => String(t.id) === b.dataset.id); d.close(); } }; } });
-    if (!chosen) return;
-    const c = C();
-    if (c.message.trim() && c.message !== chosen.message && !await dialog({ title: 'Replace your message?', html: '<p>The text you wrote will be replaced by the template.</p>', ok: 'Replace' })) return;
-    c.message = chosen.message; $('#message').value = c.message; markDirty();
+    const list = q => tplOrder().filter(t => !q || (t.name + ' ' + t.message).toLowerCase().includes(q)).map(t => `<button type="button" class="tpl-opt" data-id="${t.id}"><b>${esc(t.name)}</b><span>${esc(t.message.slice(0, 160))}${t.message.length > 160 ? '…' : ''}</span>${t.uses ? `<small>Used ${plural(t.uses, 'time')}</small>` : ''}</button>`).join('') || '<div class="g-empty">No template matches.</div>';
+    await dialog({ title: 'Start from a template', ok: null, cancel: 'Close',
+      html: `<input type="search" id="tpl-q" placeholder="Search templates" aria-label="Search templates"><div class="dlg-picker" id="tpl-opts">${list('')}</div>`,
+      onOpen: d => {
+        $('#tpl-q').focus();
+        $('#tpl-q').oninput = e => { $('#tpl-opts').innerHTML = list(e.target.value.trim().toLowerCase()); };
+        $('#tpl-q').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#tpl-opts .tpl-opt')?.click(); } };
+        $('#dialog-content').onclick = e => { const b = e.target.closest('.tpl-opt'); if (b) { chosen = S.templates.find(t => String(t.id) === b.dataset.id); d.close(); } };
+      } });
+    if (chosen) await applyTemplate(chosen);
+  }
+  $('#tpl-load').addEventListener('click', pickTemplate);
+  $('#tpl-bar').addEventListener('click', async e => {
+    const chip = e.target.closest('[data-tpl]');
+    if (chip) return applyTemplate(S.templates.find(t => String(t.id) === chip.dataset.tpl));
+    const act = e.target.closest('[data-tpl-act]')?.dataset.tplAct; if (!act) return;
+    const c = C(); const t = S.templates.find(x => x.id === c.templateId);
+    if (act === 'all') return pickTemplate();
+    if (act === 'detach') { c.templateId = null; renderTplBar(); markDirty(); return; }
+    if (act === 'update' && t) {
+      if (!await dialog({ title: `Update “${t.name}”?`, html: '<p>The template gets this text. Messages already scheduled from it don\'t change.</p>', ok: 'Update template' })) return;
+      try { await api('templates/' + t.id, { method: 'PUT', body: { name: t.name, message: c.message } }); await loadTemplates(); renderTplBar(); toast('Template updated'); }
+      catch (err) { toast(err.message, true); }
+    }
   });
+  $('#title').addEventListener('input', e => { C().title = e.target.value; markDirty(); });
 
   // when
   function renderDayChips() {
@@ -1038,7 +1086,8 @@
     e.preventDefault();
     const c = C(); $('#job-error').textContent = '';
     const fd = new FormData();
-    fd.set('title', ''); fd.set('message', c.message);
+    fd.set('title', c.title || ''); fd.set('message', c.message);
+    if (c.templateId && c.mode !== 'edit') fd.set('templateId', String(c.templateId));
     fd.set('groups', JSON.stringify([...c.picked.values()].sort(byName).map(g => g.id)));
     fd.set('date', c.date); fd.set('time', c.time);
     fd.set('gapMin', String(Math.max(30, c.gapMin))); fd.set('gapMax', String(Math.max(30, c.gapMin, c.gapMax)));
