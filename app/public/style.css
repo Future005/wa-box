@@ -644,3 +644,12 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .keep-draft input { margin-top: 3px; accent-color: var(--teal); }
 #draft-note .link { margin-left: 6px; }
 @media (max-width: 520px) { .save-state { display: none; } }
+
+/* another time, Sent tools */
+.extra-times:empty { display: none; }
+.extra-row { margin-top: 10px; }
+.with-x { display: flex; gap: 6px; align-items: center; }
+.with-x input { flex: 1; min-width: 0; }
+.icon-x { width: 34px; height: 34px; border: 1px solid var(--line-2); border-radius: 50%; background: var(--paper); font-size: 18px; line-height: 1; cursor: pointer; color: var(--ink-2); flex: none; }
+.add-time { margin-top: 10px; display: inline-block; }
+.sent-tools { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 12px; }

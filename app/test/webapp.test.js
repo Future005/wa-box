@@ -145,6 +145,41 @@ test('unsaved edits to a scheduled message are kept apart until saved; saving cl
   assert.equal(j.message, 'Final'); assert.equal(j.editDraft, null);
 });
 
+// ---------- batch 4: another time, Sent period and CSV ----------
+test('a second time copies the first message\'s image instead of needing it again', async () => {
+  const f = form({ title: 'Poster', message: 'See you', groups: ['a@g.us'], date: tomorrow(), time: '08:00' });
+  f.set('image', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'p.png');
+  const first = await call('POST', 'jobs', null, { form: f });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const second = await call('POST', 'jobs', null, { form: form({ title: 'Poster', message: 'See you', groups: ['a@g.us'], date: tomorrow(), time: '16:00', copyImageFrom: String(first.body.id) }) });
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  const Database = require('better-sqlite3');
+  const d = new Database(path.join(DATA, 'wabox.db'), { readonly: true });
+  const [a, b] = [first.body.id, second.body.id].map(id => d.prepare('SELECT media_file FROM jobs WHERE id=?').get(id).media_file);
+  d.close();
+  assert.ok(a && b && a !== b, 'each message has its own copy');
+  assert.ok(fs.existsSync(path.join(DATA, 'media', b)));
+});
+
+test('Sent can be limited to a period and downloaded as CSV', async () => {
+  const Database = require('better-sqlite3');
+  const d = new Database(path.join(DATA, 'wabox.db'));
+  const job = (await jobsIn('upcoming'))[0];
+  const old = Date.now() - 40 * 86400e3, recent = Date.now() - 3600e3;
+  for (const [t, g] of [[old, 'Old, group'], [recent, 'New "group"']]) {
+    const id = d.prepare("INSERT INTO sends(job_id,occurrence,group_id,group_name,status,attempt_at) VALUES(?,?,?,?,'sending',?)").run(job.id, t, 'x' + t, g, t).lastInsertRowid;
+    d.prepare("UPDATE sends SET status='sent', sent_at=? WHERE id=?").run(t, id);
+  }
+  d.close();
+  const all = (await call('GET', 'sends')).body.sends;
+  const week = (await call('GET', `sends?since=${Date.now() - 7 * 86400e3}`)).body.sends;
+  assert.ok(all.length >= 2); assert.equal(week.length, all.length - 1);
+  const csv = await call('GET', `sends.csv?since=${Date.now() - 7 * 86400e3}`);
+  assert.equal(csv.status, 200);
+  assert.match(csv.body, /^﻿?"When \(India time\)","Group","Message name","Message","Result","Delivery","Details"/);
+  assert.match(csv.body, /"New ""group"""/); assert.doesNotMatch(csv.body, /Old, group/);
+});
+
 test('every status change in these tests followed the state machines', () => {
   const Database = require('better-sqlite3');
   const d = new Database(path.join(DATA, 'wabox.db'), { readonly: true });

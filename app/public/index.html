@@ -197,6 +197,8 @@
                 <label class="fld"><span>Date</span><input name="date" id="date" type="date" required></label>
                 <label class="fld"><span>Time</span><input name="time" id="time" type="time" required></label>
               </div>
+              <div class="extra-times" id="extra-times"></div>
+              <button type="button" class="link add-time" id="add-time">+ Add another time</button>
               <div class="repeat">
                 <label class="switch"><input type="checkbox" id="repeat-on"><span class="track"></span><span>Repeat every week</span></label>
                 <div class="weekdays hidden" id="repeat-days">
@@ -267,6 +269,7 @@
       <section class="view" data-view="scheduled">
         <header class="page-head">
           <div><h1>Scheduled</h1><p class="lede">Everything waiting to go out, by day. Click one to see details or change it.</p></div>
+          <div class="head-actions"><input id="sched-search" type="search" placeholder="Search message or group" aria-label="Search scheduled messages"></div>
         </header>
         <div class="tabs" id="sched-tabs" role="tablist">
           <button role="tab" data-filter="upcoming" class="on">Upcoming</button>
@@ -283,6 +286,13 @@
           <div><h1>Sent</h1><p class="lede">One row per group, per send. Newest first.</p></div>
           <div class="head-actions"><input id="sent-search" type="search" placeholder="Search group or message" aria-label="Search sent messages"></div>
         </header>
+        <div class="sent-tools">
+          <span class="seg" role="radiogroup" aria-label="Period" id="sent-range">
+            <button type="button" role="radio" data-range="1">Today</button><button type="button" role="radio" data-range="7">7 days</button>
+            <button type="button" role="radio" data-range="30">30 days</button><button type="button" role="radio" data-range="0">All</button>
+          </span>
+          <a class="btn btn-ghost btn-sm" id="sent-csv" download>Download CSV</a>
+        </div>
         <div class="tabs" id="sent-tabs" role="tablist"></div>
         <div class="table-wrap"><table class="table" id="sent-table"><thead><tr><th>When</th><th>Group</th><th>Message</th><th>Result</th></tr></thead><tbody></tbody></table></div>
       </section>

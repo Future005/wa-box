@@ -205,12 +205,25 @@ api.get('/jobs', (req, res) => {
   res.json({ jobs: rows.map(serializeJob) });
 });
 
-api.get('/sends', (req, res) => {
+// ?days=N limits to the last N days (Today = 1 in India time is handled by the browser's "since").
+function sendRows(req, limit) {
   const phone = viewPhone(req) ?? savedGroups.current();
-  const rows = db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id WHERE j.phone IS ?
-    ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT 500`).all(phone || null);
-  res.json({ sends: rows.map(r => ({ id: r.id, jobId: r.job_id, groupId: r.group_id, title: r.title, preview: r.message.slice(0, 80),
+  const since = Number(req.query.since) || 0;
+  return db.prepare(`SELECT s.*, j.title, j.message FROM sends s JOIN jobs j ON j.id = s.job_id WHERE j.phone IS ?
+    AND COALESCE(s.sent_at, s.attempt_at, s.occurrence) >= ? ORDER BY COALESCE(s.sent_at, s.attempt_at, s.occurrence) DESC LIMIT ?`).all(phone || null, since, limit);
+}
+api.get('/sends', (req, res) => {
+  res.json({ sends: sendRows(req, 500).map(r => ({ id: r.id, jobId: r.job_id, groupId: r.group_id, title: r.title, preview: r.message.slice(0, 80),
     group: r.group_name, status: r.status, error: r.error, verified: !!r.verified, ack: r.ack, at: r.sent_at || r.attempt_at || r.occurrence })) });
+});
+// Spreadsheet of what was sent (same filters), for reports.
+api.get('/sends.csv', (req, res) => {
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = sendRows(req, 20000);
+  const tick = a => (a >= 3 ? 'read' : a === 2 ? 'delivered' : a === 1 ? 'sent' : '');
+  const lines = [['When (India time)', 'Group', 'Message name', 'Message', 'Result', 'Delivery', 'Details'].map(q).join(',')]
+    .concat(rows.map(r => [formatIst(r.sent_at || r.attempt_at || r.occurrence), r.group_name, r.title, r.message, SM.label('send', r.status), tick(r.ack), r.error].map(q).join(',')));
+  res.type('text/csv').set('Content-Disposition', `attachment; filename="wabox-sent-${epochToIst(Date.now()).date}.csv"`).send('\ufeff' + lines.join('\r\n'));
 });
 
 // Decide about one group after an unclear or failed send.
@@ -259,7 +272,17 @@ api.post('/test-send', upload.single('image'), wrap(async (req, res) => {
 api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
   const v = await validateJobInput(req.body);
   if (v.imageUrl && req.file) throw bad('Use either an uploaded image or an image link, not both');
-  const id = createJob(v, { createdBy: req.user.username, media: saveMedia(req.file) });
+  // "Add another time": the extra copies reuse the first one's uploaded image (each gets its own file).
+  let media = saveMedia(req.file);
+  if (!media && !v.imageUrl && req.body.copyImageFrom) {
+    const src = db.prepare('SELECT media_file, media_mime FROM jobs WHERE id=?').get(Number(req.body.copyImageFrom));
+    if (src?.media_file) {
+      const name = crypto.randomBytes(12).toString('hex') + path.extname(src.media_file);
+      fs.copyFileSync(path.join(DATA_DIR, 'media', src.media_file), path.join(DATA_DIR, 'media', name));
+      media = { name, mime: src.media_mime };
+    }
+  }
+  const id = createJob(v, { createdBy: req.user.username, media });
   if (req.body.templateId) db.prepare('UPDATE templates SET uses = uses + 1 WHERE id=?').run(Number(req.body.templateId));   // most-used templates show first
   res.json({ ok: true, id });
 }));

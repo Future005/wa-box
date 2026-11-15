@@ -330,7 +330,9 @@
     const list = againCandidates();
     $('#again-strip').innerHTML = list.length ? `<section class="again"><h2>Send these again?</h2>${list.map(j => `<div class="again-row"><span><b>${esc(jobName(j))}</b><small>${plural(j.groups.length, 'group')} · last sent ${esc(shortDate(j.runAt))}, ${ist(j.runAt).time}</small></span><a class="btn btn-ghost btn-sm" href="#compose?again=${j.id}">Repeat ${esc(shortDate(nextWeekOf(j)))}</a></div>`).join('')}</section>` : '';
   }
-  async function loadSendsQuiet() { try { S.sends = (await api('sends' + qPhone('?'))).sends; } catch { /* keep */ } }
+  // Sent: period filter (India-time days) and a CSV of exactly that period.
+  const sentSince = () => { const d = Number(S.sentRange ?? 7); return d ? istEpoch(ist(Date.now() - (d - 1) * 86400e3).date, '00:00') : 0; };
+  async function loadSendsQuiet(since = 0) { try { S.sends = (await api(`sends?since=${since}` + qPhone('&'))).sends; } catch { /* keep */ } }
   async function undoJob(id) {
     try {
       const r = await api(`jobs/${id}/undo`, { method: 'POST' });
@@ -432,7 +434,13 @@
     if (isStartingSoon(j)) acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['unschedule', 'Move to drafts', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['rest', 'Change the rest', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
-    else acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
+    else {
+      const missedIds = j.groups.map(g => g.id).filter(id => !SMx.is('send', (j.sends.find(x => x.group_id === id) || {}).status || 'pending', 'reachedOrReaching'));
+      const some = missedIds.length && missedIds.length < j.groups.length;
+      if (some) acts.push(['rest2', `Send to the ${missedIds.length} that didn't get it`, 'btn-primary']);
+      acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, some ? 'btn-ghost' : 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
+      S.drawerMissed = missedIds;
+    }
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
   }
   $('#dr-body').addEventListener('click', async e => {
@@ -456,6 +464,7 @@
     try {
       if (b.dataset.act === 'undo') return undoJob(j.id);
       if (b.dataset.act === 'edit') location.hash = `compose?edit=${j.id}`;
+      if (b.dataset.act === 'rest2') { closeDrawer(); location.hash = `compose?dup=${j.id}&rest=1&only=${encodeURIComponent((S.drawerMissed || []).join(','))}`; return; }
       if (b.dataset.act === 'unschedule') {
         const r = await api(`jobs/${j.id}/unschedule`, { method: 'POST' });
         closeDrawer(); await loadJobs(); if (S.view === 'scheduled') renderScheduled(); if (S.view === 'today') renderToday();
@@ -570,10 +579,13 @@
     const f = S.schedFilter;
     $$('#sched-tabs button').forEach(b => b.classList.toggle('on', b.dataset.filter === f));
     let jobs, dateOf = j => j.startAt;
-    if (f === 'drafts') { $('#sched-list').innerHTML = draftsHtml(); return; }
+    const q = ($('#sched-search').value || '').trim().toLowerCase();
+    const match = j => !q || [j.title, j.message, ...j.groups.map(g => g.name)].some(x => String(x || '').toLowerCase().includes(q));
+    if (f === 'drafts') { $('#sched-list').innerHTML = draftsHtml(match); return; }
     if (f === 'upcoming') jobs = S.upcoming;
     else if (f === 'repeat') jobs = S.upcoming.filter(j => j.repeatDays.length);
     else { jobs = S.past; dateOf = j => j.runAt; }
+    if (q) { jobs = jobs.filter(match); if (!jobs.length) { $('#sched-list').innerHTML = `<div class="empty"><b>Nothing matches “${esc(q)}”</b><p>Search looks at the message, its name and its groups.</p></div>`; return; } }
     $('#sched-list').innerHTML = jobs.length ? agendaHtml(jobs, dateOf) : `<div class="empty"><b>${f === 'past' ? 'Nothing finished yet' : f === 'repeat' ? 'No repeating messages' : 'Nothing scheduled'}</b><p>${f === 'repeat' ? 'Turn on "Repeat every week" when you write a message, for things like weekend class reminders.' : 'Messages you schedule show up here, grouped by day.'}</p>${f !== 'past' ? '<a class="btn btn-primary" href="#compose">New message</a>' : ''}</div>`;
   }
   // Drafts: messages without a time (the 'draft' state), plus unsaved edits to scheduled messages.
@@ -586,14 +598,14 @@
         ${d.note ? `<span class="hint">${esc(d.note)}</span>` : ''}</span>
       <span class="row-end"><span class="row-acts"><button type="button" class="btn btn-ghost btn-sm" data-draft="${d.id}">Open</button><button type="button" class="btn btn-danger-ghost btn-sm" data-deldraft="${d.id}">Delete</button></span></span></div>`;
   }
-  function draftsHtml() {
+  function draftsHtml(match = () => true) {
     const edits = S.upcoming.filter(j => j.editDraft);
     const parts = [];
     if (edits.length) parts.push(`<div class="day"><h3><span>Unsaved changes to scheduled messages</span></h3><div class="day-rows">${edits.map(j => `<div class="job-row draft-row" role="button" tabindex="0" data-editjob="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span><span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
       <span class="job-meta"><span>Scheduled ${esc(whenLabel(j.runAt))} as it was</span><span>${ICON.user}${esc(who(j.editDraft.by).split('@')[0])} · edited ${esc(ago(j.editDraft.at))}</span></span></span>
       <span class="row-end"><span class="row-acts"><button type="button" class="btn btn-ghost btn-sm" data-editjob="${j.id}">Continue editing</button></span></span></div>`).join('')}</div></div>`);
-    if (S.drafts.length) parts.push(`<div class="day"><h3><span>Drafts</span></h3><div class="day-rows">${S.drafts.map(draftRow).join('')}</div></div>`);
+    if (S.drafts.filter(match).length) parts.push(`<div class="day"><h3><span>Drafts</span></h3><div class="day-rows">${S.drafts.filter(match).map(draftRow).join('')}</div></div>`);
     return parts.join('') || `<div class="empty"><b>No drafts</b><p>Anything you start writing is saved here as you type, until you give it a time. Aborted messages can come back here too.</p><a class="btn btn-primary" href="#compose">New message</a></div>`;
   }
   async function deleteDraftFlow(id) {
@@ -602,11 +614,14 @@
     try { await api(`drafts/${id}`, { method: 'DELETE' }); toast('Draft deleted'); } catch (err) { toast(err.message, true); }
     await loadJobs(); if (S.view === 'scheduled') renderScheduled(); if (S.view === 'today') renderToday();
   }
+  $('#sched-search').addEventListener('input', () => renderScheduled());
   $('#sched-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.schedFilter = b.dataset.filter; renderScheduled(); } });
 
   // ============ Sent ============
   async function renderSent() {
-    await loadSendsQuiet();
+    await loadSendsQuiet(sentSince());
+    $$('#sent-range [data-range]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.range === String(S.sentRange ?? 7))));
+    $('#sent-csv').href = `api/sends.csv?since=${sentSince()}` + qPhone('&');
     const groups = { all: ['All'], sent: ['Sent', ['sent']], problems: ['Problems', SMx.group('send', 'didNotGet')], practice: ['Practice', ['dry_run']] };
     const count = k => k === 'all' ? S.sends.length : S.sends.filter(s => groups[k][1].includes(s.status)).length;
     $('#sent-tabs').innerHTML = Object.entries(groups).map(([k, [l]]) => `<button role="tab" data-filter="${k}" class="${S.sentFilter === k ? 'on' : ''}">${l}<small>${count(k)}</small></button>`).join('');
@@ -616,10 +631,11 @@
     $('#sent-table tbody').innerHTML = rows.length ? rows.map(s => `<tr data-job="${s.jobId}">
       <td class="when">${esc(whenLabel(s.at))}</td><td>${esc(s.group)}</td><td class="msg">${esc(firstLine(s.preview))}</td>
       <td><span class="gs">${tickHtml(s)}${sendPill(s.status)}</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</td></tr>`).join('')
-      : `<tr class="empty-row"><td colspan="4">${S.sends.length ? 'Nothing matches.' : 'Nothing has been sent yet.'}</td></tr>`;
+      : `<tr class="empty-row"><td colspan="4">${S.sends.length ? 'Nothing matches.' : (S.sentRange ?? 7) ? 'Nothing sent in this period. Try a longer one.' : 'Nothing has been sent yet.'}</td></tr>`;
   }
   $('#sent-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.sentFilter = b.dataset.filter; renderSent(); } });
   $('#sent-search').addEventListener('input', () => renderSent());
+  $('#sent-range').addEventListener('click', e => { const b = e.target.closest('[data-range]'); if (!b) return; S.sentRange = Number(b.dataset.range); renderSent(); });
   $('#sent-table').addEventListener('click', e => { const r = e.target.closest('tr[data-job]'); if (r) openDrawer(Number(r.dataset.job)); });
 
   // ============ Templates ============
@@ -657,10 +673,11 @@
 
   // ============ Group lists ============
   async function renderLists() {
-    await Promise.all([loadLists(), loadGroups()]);
+    await Promise.all([loadLists(), loadGroups(), loadJobs()]);
+    const usedBy = l => { const ids = l.groups.map(g => g.id); return ids.length ? S.upcoming.filter(j => ids.every(id => j.groups.some(g => g.id === id))).length : 0; };
     $('#list-new').classList.toggle('hidden', viewingAway());   // lists are made on the linked number
     $('#lists-list').innerHTML = S.lists.length ? S.lists.map(l => `<article class="card"><h3>${esc(l.name)}</h3>
-      <span class="meta">${plural(l.groups.length, 'group')}${l.missing ? ` · ${l.missing} no longer available` : ''}</span>
+      <span class="meta">${plural(l.groups.length, 'group')}${l.missing ? ` · ${l.missing} no longer available` : ''}${usedBy(l) ? ` · in ${plural(usedBy(l), 'scheduled message')}` : ''}</span>
       <div class="tags">${l.groups.slice().sort(byName).slice(0, 8).map(g => `<span class="tag">${esc(g.name)}</span>`).join('')}${l.groups.length > 8 ? `<span class="tag">+${l.groups.length - 8} more</span>` : ''}</div>
       <div class="btn-row"><a class="btn btn-primary btn-sm" href="#compose?list=${l.id}">Write to this list</a><button class="btn btn-ghost btn-sm" data-edit="${l.id}" type="button">Edit</button><button class="btn btn-danger-ghost btn-sm" data-del="${l.id}" type="button">Delete</button></div></article>`).join('')
       : `<div class="empty"><b>No group lists yet</b><p>Make one for each set you message together, like the 15 weekend cohorts or the Thursday–Friday batch.</p><button class="btn btn-primary" type="button" data-new>New list</button></div>`;
@@ -685,7 +702,8 @@
         <div class="picked-chips" id="dl-chips"></div>
         <div class="picker-bar dl-bar"><span class="search-wrap"><input id="dl-search" type="search" placeholder="Search groups · Enter ticks the first match" aria-label="Search groups"></span>
           <span class="seg" role="radiogroup" aria-label="Show"><button type="button" data-dlview="all" role="radio">All</button><button type="button" data-dlview="picked" role="radio">Selected</button></span></div>
-        <div class="dlg-picker" id="dl-groups"></div><p class="hint" id="dl-count"></p>`,
+        <div class="dlg-picker" id="dl-groups"></div><p class="hint" id="dl-count"></p>
+        ${list ? '<p class="hint">Messages already scheduled keep the groups they have. Changing this list affects new messages only.</p>' : ''}`,
       onOpen: () => {
         $('#dl-name').value = list?.name || ''; draw();
         $('#dl-search').addEventListener('input', draw);
@@ -722,7 +740,7 @@
   const DRAFT_KEY = 'wabox.draft.v1';
   function blankCompose() {
     const last = store.get('wabox.lastTime') || '10:00';
-    return { mode: 'new', id: null, draftId: null, picked: new Map(), message: '', title: '', templateId: null, date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
+    return { mode: 'new', id: null, draftId: null, extra: [], picked: new Map(), message: '', title: '', templateId: null, date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
       gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, imageLink: null, linkPreview: true, dirty: false, search: '' };
   }
   async function openCompose() {
@@ -793,7 +811,7 @@
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
     renderComposeButtons(); setSaveState('');
     c.pvIdx = 0;
-    renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); updateCompose();
+    renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); renderExtraTimes(); updateCompose();
     if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
     if (c.migrate) { delete c.migrate; c.dirty = true; saveDraftNow(c); }
   }
@@ -865,7 +883,7 @@
       $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax; $('#repeat-on').checked = c.repeat.length > 0;
       $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
       $('#draft-note').textContent = 'Your unsaved changes are back. Press Save changes to make them live.';
-      renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); updateCompose();
+      renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); renderExtraTimes(); updateCompose();
     }
     if (e.target.id === 'edit-drop') {
       try { await api(`jobs/${c.id}/edit-draft`, { method: 'DELETE' }); } catch { /* already gone */ }
@@ -1109,9 +1127,29 @@
     const c = C();
     if (e.target.checked && !c.repeat.length && c.date) { c.repeat = [ist(istEpoch(c.date, '12:00')).dow]; $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); }); }
     if (!e.target.checked) c.repeat = [];
-    markDirty();
+    renderExtraTimes(); markDirty();
   });
   $('#repeat-days').addEventListener('change', () => { C().repeat = $$('#repeat-days input:checked').map(i => Number(i.value)); markDirty(); });
+
+  // "Add another time": the same message at several times (one message per time).
+  function renderExtraTimes() {
+    const c = C();
+    const allowed = c.mode !== 'edit' && !$('#repeat-on').checked;
+    if (!allowed) c.extra = [];
+    if (!c.extra) c.extra = [];
+    $('#add-time').classList.toggle('hidden', !allowed || c.extra.length >= 5);
+    $('#extra-times').innerHTML = c.extra.map((x, i) => `<div class="row-2 extra-row"><label class="fld"><span>Also on</span><input type="date" data-xi="${i}" data-xk="date" value="${esc(x.date)}"></label>
+      <label class="fld"><span>at</span><span class="with-x"><input type="time" data-xi="${i}" data-xk="time" value="${esc(x.time)}"><button type="button" class="icon-x" data-xdel="${i}" aria-label="Remove this time">×</button></span></label></div>`).join('');
+  }
+  $('#add-time').addEventListener('click', () => {
+    const c = C(); if (!c.extra) c.extra = [];
+    const base = c.extra.length ? c.extra[c.extra.length - 1] : { date: c.date, time: c.time || '10:00' };
+    const next = ist(istEpoch(base.date, base.time) + 8 * 3600e3);   // a sensible guess: 8 hours later
+    c.extra.push({ date: next.date, time: next.time }); renderExtraTimes(); markDirty();
+    $(`#extra-times [data-xi="${c.extra.length - 1}"][data-xk="time"]`)?.focus();
+  });
+  $('#extra-times').addEventListener('input', e => { const t = e.target; if (t.dataset.xi === undefined) return; C().extra[Number(t.dataset.xi)][t.dataset.xk] = t.value; markDirty(); });
+  $('#extra-times').addEventListener('click', e => { const b = e.target.closest('[data-xdel]'); if (!b) return; C().extra.splice(Number(b.dataset.xdel), 1); renderExtraTimes(); markDirty(); });
 
   // pacing
   function renderPace() {
@@ -1177,6 +1215,11 @@
     else if (runAt < Date.now() - 60000) checks.push(['bad', 'That time has already passed. Choose a later time.']);
     else if (runAt < Date.now() + 3 * 60000) checks.push(['warn', 'This starts within the next few minutes.']);
     if ($('#repeat-on').checked && !c.repeat.length) checks.push(['bad', 'Pick the days it should repeat on, or turn repeat off.']);
+    const extraAt = (c.extra || []).map(x => (x.date && /^\d{2}:\d{2}$/.test(x.time || '') ? istEpoch(x.date, x.time) : null));
+    if (extraAt.some(t => !t)) checks.push(['bad', 'Fill in or remove the extra time.']);
+    else if (extraAt.some(t => t < Date.now() + 60000)) checks.push(['bad', 'One of the extra times has already passed.']);
+    else if (runAt && new Set([runAt, ...extraAt]).size < extraAt.length + 1) checks.push(['bad', 'Two of the times are the same.']);
+    else if (extraAt.length && runAt) checks.push(['ok', `Goes out ${extraAt.length + 1} times: ${[runAt, ...extraAt].sort((a, b) => a - b).map(t => whenLabel(t)).join(' · ')}. Each one is its own message you can change or abort.`]);
     const shorteners = /(^|\/\/)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|cutt\.ly|rb\.gy|is\.gd|ow\.ly|shorturl\.at|tiny\.cc)\//i;
     if (links.some(l => shorteners.test(l))) checks.push(['warn', 'Short links (bit.ly and similar) are often treated as spam. Use the full link.']);
     if (links.length > 3) checks.push(['warn', `This has ${links.length} links. Messages with many links look like spam; keep it to one or two.`]);
@@ -1212,7 +1255,7 @@
     // submit
     const blocked = checks.some(x => x[0] === 'bad');
     const btn = $('#job-submit'); btn.disabled = blocked;
-    btn.textContent = c.mode === 'edit' ? 'Save changes' : runAt && !blocked ? `Schedule for ${relDay(runAt) || shortDate(runAt)}, ${c.time}` : 'Schedule';
+    btn.textContent = c.mode === 'edit' ? 'Save changes' : c.extra?.length && !blocked ? `Schedule ${c.extra.length + 1} times` : runAt && !blocked ? `Schedule for ${relDay(runAt) || shortDate(runAt)}, ${c.time}` : 'Schedule';
   }
   $('#checks').addEventListener('click', e => {
     const b = e.target.closest('[data-fix]'); if (!b) return;
@@ -1285,8 +1328,15 @@
       else if (c.draftId) created = await api(`drafts/${c.draftId}/schedule`, { method: 'POST', form: fd });
       else created = await api('jobs', { method: 'POST', form: fd });
       store.set('wabox.lastTime', c.time);
+      // the same message at the other times: one more message each (the image is copied, not uploaded again)
+      const more = [];
+      for (const x of (c.mode === 'edit' || !created ? [] : c.extra || [])) {
+        const f2 = new FormData(); for (const [k, v] of fd.entries()) if (k !== 'templateId' && k !== 'image') f2.set(k, v);
+        f2.set('date', x.date); f2.set('time', x.time); f2.set('copyImageFrom', String(created.id));
+        try { more.push(await api('jobs', { method: 'POST', form: f2 })); } catch (err) { toast(`Scheduled the first one, but ${whenLabel(istEpoch(x.date, x.time))} failed: ${err.message}`, true); }
+      }
       c.dirty = false;
-      toast(c.mode === 'edit' ? 'Changes saved' : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`, false, created ? { label: 'Undo', run: () => undoJob(created.id) } : null);
+      toast(c.mode === 'edit' ? 'Changes saved' : more.length ? `Scheduled ${more.length + 1} times` : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`, false, created && !more.length ? { label: 'Undo', run: () => undoJob(created.id) } : null);
       await loadJobs(); location.hash = 'scheduled';
     } catch (err) { $('#job-error').textContent = err.message; btn.disabled = false; btn.textContent = label; }
   });
