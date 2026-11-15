@@ -375,7 +375,7 @@
     return `<div class="job-row" role="button" tabindex="0" data-job="${j.id}">
       <span class="job-time">${ist(j.runAt).time}</span>
       <span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
-        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(who(j.createdBy).split('@')[0])}</span></span>
+        <span class="job-meta"><span>${ICON.users}${plural(j.groups.length, 'group')}</span>${j.repeatDays.length ? `<span>${ICON.repeat}${esc(repeatLabel(j.repeatDays))}${j.pausedUntil ? ` · paused until ${esc(shortDate(j.pausedUntil))}` : ''}</span>` : ''}${j.hasImage || j.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(who(j.createdBy).split('@')[0])}</span></span>
         ${j.status === 'running' ? `<span class="live">${esc(liveLine(j))}</span><span class="progress"><i data-w="${pct}"></i></span>` : ''}
         ${j.note && ['scheduled', 'running'].includes(j.status) ? `<span class="job-meta">${esc(j.note)}</span>` : ''}
       </span><span class="row-end">${soon ? `<span class="countdown" data-countdown="${j.startAt}"></span>` : j.status === 'scheduled' ? '' : pill(j.status)}${rowActions(j)}</span></div>`;
@@ -429,10 +429,13 @@
       <div><h3 class="sec-title">Groups</h3><div class="gstatus">${j.groups.map(g => { const s = byId.get(g.id);
         const canDecide = s && ['unconfirmed', 'failed', 'blocked_duplicate', 'skipped', 'missed'].includes(s.status);
         const acts = canDecide ? `<span class="g-actions">${['unconfirmed', 'failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="mark" data-gid="${esc(g.id)}">It was sent</button>` : ''}${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" data-gact="again" data-gid="${esc(g.id)}">Send again</button>` : ''}</span>` : '';
-        return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${sendPill(s ? s.status : 'pending')}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
+        return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${sendPill(s ? s.status : 'pending')}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>
+      <details class="history" id="dr-history"><summary>Change history</summary><div class="hist-list" data-for="${j.id}"><p class="hint">Loading…</p></div></details>`;
     const acts = [];
     if (isStartingSoon(j)) acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
-    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['unschedule', 'Move to drafts', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
+    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'],
+      ...(j.repeatDays.length ? [j.pausedUntil ? ['resume', 'Resume now', 'btn-ghost'] : ['pause', 'Pause until…', 'btn-ghost']] : []),
+      ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['unschedule', 'Move to drafts', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['rest', 'Change the rest', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else {
       const missedIds = j.groups.map(g => g.id).filter(id => !SMx.is('send', (j.sends.find(x => x.group_id === id) || {}).status || 'pending', 'reachedOrReaching'));
@@ -478,6 +481,8 @@
       }
       if (b.dataset.act === 'abort') await abortFlow(j);
       if (b.dataset.act === 'reschedule') await rescheduleFlow(j);
+      if (b.dataset.act === 'pause') await pauseFlow(j);
+      if (b.dataset.act === 'resume') { const r = await api(`jobs/${j.id}/resume`, { method: 'POST' }); toast(`Resumed. Next: ${whenLabel(r.next)}`); await afterChange(j.id); }
       if (b.dataset.act === 'rest') await changeRestFlow(j);
     } catch (err) { toast(err.message, true); }
   });
@@ -525,6 +530,39 @@
       toast((r.skipped ? `${r.sent ? `Aborted. ${r.sent} of ${n} got it.` : 'Aborted this time.'} Next: ${whenLabel(r.next)}`
         : r.sent ? `Aborted. ${r.sent} of ${n} got it; the other ${r.notSent} won't.` : "Aborted. It won't be sent.") + (r.draftId ? ' Kept as a draft.' : ''),
         false, r.draftId ? { label: 'Open draft', run: () => { location.hash = `compose?draft=${r.draftId}`; } } : null);
+    } catch (err) { toast(err.message, true); }
+    await afterChange(j.id);
+  }
+
+  // Change history: loaded when opened (it's rarely needed and can be long).
+  $('#dr-body').addEventListener('toggle', async e => {
+    if (e.target.id !== 'dr-history' || !e.target.open) return;
+    const box = e.target.querySelector('.hist-list');
+    try {
+      const { history } = await api(`jobs/${box.dataset.for}/history`);
+      box.innerHTML = history.length ? `<ol>${history.map(h => `<li class="h-${h.kind}"><time title="${esc(new Date(h.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }))}">${esc(shortDate(h.at))}, ${ist(h.at).time}</time><span>${h.by ? `<b>${esc(who(h.by).split('@')[0])}</b> ` : ''}${esc(h.text)}</span></li>`).join('')}</ol>`
+        : '<p class="hint">Nothing recorded yet. Changes made from now on show up here.</p>';
+    } catch (err) { box.innerHTML = `<p class="hint">${esc(err.message)}</p>`; }
+  }, true);
+
+  // Pause a weekly message until a date: the weeks before it are skipped, then it carries on.
+  async function pauseFlow(j) {
+    const tomorrow = ist(Date.now() + DAY).date;
+    const presets = [[1, 'One week'], [2, 'Two weeks'], [4, 'Four weeks']];
+    const html = `<p>It skips every send before the date you pick, then goes out ${esc(repeatLabel(j.repeatDays))} at ${esc(j.time)} as usual. Nothing else changes.</p>
+      <div class="chip-row">${presets.map(([w, l]) => `<button type="button" class="btn btn-ghost btn-sm" data-pw="${w}">${l}</button>`).join('')}</div>
+      <label class="fld"><span>Start again on</span><input type="date" id="pause-until" value="${ist(Date.now() + 7 * DAY).date}" min="${tomorrow}"></label>
+      <p class="hint" id="pause-next"></p>`;
+    const nextFrom = date => { const days = j.repeatDays; let t = istEpoch(date, j.time); for (let i = 0; i < 8; i++, t += DAY) if (days.includes(ist(t).dow) && t >= istEpoch(date, '00:00')) return t; return null; };
+    const show = () => { const v = $('#pause-until').value; const n = v && nextFrom(v); $('#pause-next').textContent = n ? `Next send: ${whenLabel(n)}` : ''; };
+    const ok = await dialog({ title: 'Pause until…', html, ok: 'Pause', cancel: 'Keep it running', onOpen: () => {
+      show(); $('#pause-until').addEventListener('input', show);
+      $('#dialog-content').onclick = e => { const c = e.target.closest('[data-pw]'); if (!c) return; $('#pause-until').value = ist(Date.now() + Number(c.dataset.pw) * 7 * DAY).date; show(); };
+    } });
+    if (!ok) return;
+    try {
+      const r = await api(`jobs/${j.id}/pause`, { method: 'POST', body: { until: $('#pause-until').value } });
+      toast(`Paused. Next send: ${whenLabel(r.next)}`);
     } catch (err) { toast(err.message, true); }
     await afterChange(j.id);
   }

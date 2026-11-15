@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.4.0 (15 Nov 2026)
+
+### Writing and finding messages
+- **Templates show up where you write.** The most-used ones are chips above the message box; picking one fills the text and remembers the template. Templates can be edited and renamed, and changes to a message can be saved back to its template.
+- **Messages have names.** Give a message a short name ("Saturday reminder"); it's what you see in lists. Without one, the first line is used, and messages to several groups show the group.
+- **See and change what's selected.** Picked groups show as chips you can remove one by one, with an *All / Selected* filter, *Unselect all* (with Undo), and Enter ticks the first match. Lists show how many of their groups are picked.
+- **Add another time.** Schedule the same message at up to 6 times in one go (morning and evening reminders). Each is its own message you can change or abort; an uploaded image is reused, not uploaded again.
+- **Search on Scheduled** by message, name or group, in every tab including Drafts.
+
+### Drafts
+- Anything you start writing is saved as you type as a **draft** (a message with no time, never sent). Several at once, on any device, visible to the team under **Scheduled → Drafts** and on Today.
+- **Move to drafts** takes a scheduled message's time away before it starts.
+- **Aborting** can keep a draft with the text, the image and only the groups that didn't get it.
+- **Unsaved edits** to a scheduled message are kept apart: the scheduled version goes out unchanged until you save. Continue or discard them later.
+
+### After sending
+- A finished message that missed some groups offers **Send to the N that didn't get it**.
+- **Sent**: Today / 7 days / 30 days / All, and **Download CSV** for that period (opens in Excel or Sheets).
+- **Group lists** show how many scheduled messages use them; editing a list says that messages already scheduled keep their groups.
+
+### Weekly messages
+- **Pause until…** a date (one, two or four weeks, or any date): the weeks before it are skipped, then it carries on as usual. **Resume now** ends the pause early.
+
+### Change history
+- Every message has a **Change history** in its panel: who created, edited (and what changed: text, time, groups, image, pacing), rescheduled, paused, moved to drafts or aborted it, and what the scheduler did with it.
+
 ## 1.3.1 (15 Nov 2026)
 
 ### The connection status is always current, and says what's really going on

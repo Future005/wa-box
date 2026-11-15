@@ -17,7 +17,8 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, DATA_DIR, getSetting, setSetting, audit, logEvent } = require('./db');
+const { db, DATA_DIR, getSetting, setSetting, audit, logEvent, addColumn } = require('./db');
+addColumn('jobs', 'paused_until', 'INTEGER');   // a weekly message skips every week before this (IST midnight)
 const wa = require('./wa');
 const savedGroups = require('./groups');
 const alerts = require('./alerts');
@@ -552,8 +553,43 @@ function rescheduleJob(jobId, by, { date, time, scope = 'this' }) {
   db.prepare('UPDATE jobs SET run_at=?, start_at=?, time_ist=?, note=?, updated_by=?, updated_at=? WHERE id=? AND status=?')
     .run(runAt, Math.max(runAt + jitter(), Date.now() + UNDO_GRACE_MS), newTime,
       days.length && scope !== 'series' ? `Rescheduled this time to ${formatIst(runAt)}; usually ${job.time_ist}` : '', by, Date.now(), job.id, 'scheduled');
+  db.prepare('UPDATE jobs SET paused_until=NULL WHERE id=?').run(job.id);   // a chosen time replaces a pause
   logEvent('info', 'reschedule', `${by} rescheduled it to ${formatIst(runAt)}${days.length ? (scope === 'series' ? ' (every week from now on)' : ' (this time only)') : ''}`, { jobId });
   return { runAt };
+}
+
+/**
+ * Pause a weekly message until a date (India time): every week before that date is skipped, then it
+ * carries on as usual. Nothing changes state: it stays "scheduled", only its next date moves.
+ */
+function pauseJob(jobId, by, until) {
+  const job = getJob(jobId);
+  const days = JSON.parse(job?.repeat_days || '[]');
+  if (!job || job.status !== 'scheduled') throw Object.assign(new Error('Only a message that is waiting can be paused'), { status: 409 });
+  if (!days.length) throw Object.assign(new Error('Only weekly messages can be paused. Reschedule or abort a one-off message instead.'), { status: 400 });
+  if (db.prepare(`SELECT COUNT(*) n FROM sends WHERE job_id=? AND occurrence=? AND status NOT IN ${SEND('waiting')}`).get(job.id, job.run_at).n) {
+    throw Object.assign(new Error('It is sending right now. Pause it after this send finishes.'), { status: 409 });
+  }
+  let from;
+  try { from = istToEpoch(String(until || ''), '00:00'); } catch { throw Object.assign(new Error('Pick the date it should start again'), { status: 400 }); }
+  if (from <= Date.now()) throw Object.assign(new Error('Pick a date after today'), { status: 400 });
+  if (from > Date.now() + 366 * 86400e3) throw Object.assign(new Error('That date is too far ahead'), { status: 400 });
+  const next = nextWeeklyOccurrence(from - 1, job.time_ist, days);
+  db.prepare("UPDATE jobs SET run_at=?, start_at=?, paused_until=?, note=?, updated_by=?, updated_at=? WHERE id=? AND status='scheduled'")
+    .run(next, next + jitter(), from, `Paused by ${by} until ${formatIst(from).replace(/, 00:00$/, '')}. Next send ${formatIst(next)}.`, by, Date.now(), job.id);
+  logEvent('info', 'pause', `${by} paused it until ${formatIst(from).replace(/, 00:00$/, '')}; next send ${formatIst(next)}`, { jobId });
+  return { next, until: from };
+}
+
+/** End a pause early: the next usual weekly time from now. */
+function resumeJob(jobId, by) {
+  const job = getJob(jobId);
+  if (!job || job.status !== 'scheduled' || !job.paused_until) throw Object.assign(new Error('This message is not paused'), { status: 409 });
+  const next = nextWeeklyOccurrence(Date.now() + 60 * 1000, job.time_ist, JSON.parse(job.repeat_days || '[]'));
+  db.prepare("UPDATE jobs SET run_at=?, start_at=?, paused_until=NULL, note='', updated_by=?, updated_at=? WHERE id=? AND status='scheduled'")
+    .run(next, Math.max(next + jitter(), Date.now() + UNDO_GRACE_MS), by, Date.now(), job.id);
+  logEvent('info', 'pause', `${by} resumed it; next send ${formatIst(next)}`, { jobId });
+  return { next };
 }
 
 /** Stop a message that is sending and hand back the groups that haven't got it, to send something else to them. */
@@ -720,4 +756,4 @@ function health() {
   };
 }
 
-module.exports = { connectionHistory, startLoop, stop, tick, purgeMedia, undo, cancelJob, rescheduleJob, splitRest, pollReceipts, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };
+module.exports = { pauseJob, resumeJob, connectionHistory, startLoop, stop, tick, purgeMedia, undo, cancelJob, rescheduleJob, splitRest, pollReceipts, recoverInFlight, state, settings, sentToday, refreshWa, jitter, health, markSent, sendAgain, hashMessage, HARD_MIN_GAP_S, OWNER };

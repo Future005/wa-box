@@ -20,7 +20,7 @@ function serializeJob(j) {
     groups: JSON.parse(j.groups_json), date, time, runAt: j.run_at, startAt: j.start_at,
     gapMin: j.gap_min, gapMax: j.gap_max, repeatDays: JSON.parse(j.repeat_days),
     phone: j.phone || '', status: j.status, note: j.note, createdBy: j.created_by, updatedBy: j.updated_by,
-    createdAt: j.created_at, updatedAt: j.updated_at, sends: plan ? [] : sends, pace: plan?.pace || null, editDraft,
+    createdAt: j.created_at, updatedAt: j.updated_at, sends: plan ? [] : sends, pace: plan?.pace || null, editDraft, pausedUntil: j.paused_until && j.paused_until > Date.now() ? j.paused_until : null,
   };
 }
 

@@ -653,3 +653,12 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
 .icon-x { width: 34px; height: 34px; border: 1px solid var(--line-2); border-radius: 50%; background: var(--paper); font-size: 18px; line-height: 1; cursor: pointer; color: var(--ink-2); flex: none; }
 .add-time { margin-top: 10px; display: inline-block; }
 .sent-tools { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 12px; }
+
+/* change history */
+.history { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.history summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--ink-2); }
+.hist-list ol { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.hist-list li { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 13px; line-height: 1.4; }
+.hist-list time { color: var(--ink-3, var(--ink-2)); font-variant-numeric: tabular-nums; }
+.hist-list .h-system span { color: var(--ink-2); }
+.hist-list .h-warn span, .hist-list .h-error span { color: var(--warn, #9a5b00); }

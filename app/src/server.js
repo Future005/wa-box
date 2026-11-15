@@ -12,13 +12,14 @@ const wa = require('./wa');
 const sched = require('./scheduler');
 const SM = require('./machines');   // state machines: public/machines.js
 const drafts = require('./drafts');
+const history = require('./history');
 const savedGroups = require('./groups');
 const { validateJobInput, checkImageUrl, serializeJob, createJob, UNDO_MS } = require('./jobs');
 const alerts = require('./alerts');
 const apiKeys = require('./apikeys');
 const hooks = require('./hooks');
 const apiV1 = require('./api_v1');
-const { istToEpoch, epochToIst, formatIst } = require('./time');
+const { istToEpoch, epochToIst, formatIst, prettyIst } = require('./time');
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_PATH = ('/' + (process.env.BASE_PATH || '/wabox').replace(/^\/+|\/+$/g, '')).replace(/^\/$/, '');
@@ -229,12 +230,12 @@ api.get('/sends.csv', (req, res) => {
 // Decide about one group after an unclear or failed send.
 api.post('/jobs/:id/groups/:gid/mark-sent', wrap(async (req, res) => {
   sched.markSent(Number(req.params.id), req.params.gid, req.user.username);
-  audit(req.user.username, 'marked_sent', `#${req.params.id} ${req.params.gid}`);
+  audit(req.user.username, 'marked_sent', `#${req.params.id} ${req.params.gid}`); history.record(Number(req.params.id), req.user.username, `Marked as sent in “${(db.prepare('SELECT group_name FROM sends WHERE job_id=? AND group_id=? ORDER BY id DESC').get(Number(req.params.id), req.params.gid)?.group_name || 'a group')}”`);
   res.json({ ok: true });
 }));
 api.post('/jobs/:id/groups/:gid/send-again', requireAdmin, wrap(async (req, res) => {
   sched.sendAgain(Number(req.params.id), req.params.gid, req.user.username);
-  audit(req.user.username, 'send_again', `#${req.params.id} ${req.params.gid}`);
+  audit(req.user.username, 'send_again', `#${req.params.id} ${req.params.gid}`); history.record(Number(req.params.id), req.user.username, `Asked to send again to “${(db.prepare('SELECT group_name FROM sends WHERE job_id=? AND group_id=? ORDER BY id DESC').get(Number(req.params.id), req.params.gid)?.group_name || 'a group')}”`);
   res.json({ ok: true });
 }));
 
@@ -283,6 +284,7 @@ api.post('/jobs', upload.single('image'), wrap(async (req, res) => {
     }
   }
   const id = createJob(v, { createdBy: req.user.username, media });
+  history.record(id, req.user.username, `Created for ${prettyIst(v.runAt)}, ${v.chosen.length} group${v.chosen.length === 1 ? '' : 's'}${req.body.copyImageFrom ? ' (another time of the same message)' : ''}`);
   if (req.body.templateId) db.prepare('UPDATE templates SET uses = uses + 1 WHERE id=?').run(Number(req.body.templateId));   // most-used templates show first
   res.json({ ok: true, id });
 }));
@@ -307,6 +309,9 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
     .run(v.title, v.message, mediaFile, mediaMime, mediaUrl, v.linkPreview ? 1 : 0, JSON.stringify(v.chosen), v.time, v.runAt, Math.max(v.runAt + sched.jitter(), Date.now() + UNDO_MS),
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
   if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Abort it, or use "Change the rest".'), { status: 409 });
+  db.prepare('UPDATE jobs SET paused_until=NULL WHERE id=?').run(job.id);   // the time chosen here replaces a pause
+  const changed = history.describeEdit(job, db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id));
+  history.record(job.id, req.user.username, changed ? `Edited: ${changed}` : 'Saved without changes');
   audit(req.user.username, 'job_edited', `#${job.id}`);
   drafts.clearEdit(job.id);
   res.json({ ok: true });
@@ -323,10 +328,30 @@ api.delete('/drafts/:id', wrap(async (req, res) => { drafts.deleteDraft(Number(r
 api.post('/drafts/:id/schedule', upload.single('image'), wrap(async (req, res) => {
   const v = await validateJobInput(req.body);
   const id = drafts.scheduleDraft(Number(req.params.id), v, { by: req.user.username, media: saveMedia(req.file), removeImage: req.body.removeImage === '1' });
+  history.record(id, req.user.username, `Scheduled from a draft for ${prettyIst(v.runAt)}`);
   if (req.body.templateId) db.prepare('UPDATE templates SET uses = uses + 1 WHERE id=?').run(Number(req.body.templateId));
   res.json({ ok: true, id });
 }));
-api.post('/jobs/:id/unschedule', wrap(async (req, res) => res.json({ ok: true, ...drafts.unschedule(Number(req.params.id), req.user.username) })));
+api.post('/jobs/:id/unschedule', wrap(async (req, res) => {
+  const r = drafts.unschedule(Number(req.params.id), req.user.username);
+  history.record(Number(req.params.id), req.user.username, 'Moved to drafts (no time, nothing is sent)');
+  res.json({ ok: true, ...r });
+}));
+// Weekly messages: skip every week until a date, or end the pause early.
+api.post('/jobs/:id/pause', wrap(async (req, res) => {
+  const r = sched.pauseJob(Number(req.params.id), req.user.username, req.body?.until);
+  audit(req.user.username, 'job_paused', `#${req.params.id} until ${req.body?.until}`);
+  res.json({ ok: true, ...r });
+}));
+api.post('/jobs/:id/resume', wrap(async (req, res) => {
+  const r = sched.resumeJob(Number(req.params.id), req.user.username);
+  audit(req.user.username, 'job_resumed', `#${req.params.id}`);
+  res.json({ ok: true, ...r });
+}));
+api.get('/jobs/:id/history', wrap(async (req, res) => {
+  if (!db.prepare('SELECT 1 FROM jobs WHERE id=?').get(Number(req.params.id))) throw Object.assign(new Error('Message not found'), { status: 404 });
+  res.json({ history: history.forJob(Number(req.params.id)) });
+}));
 // Unsaved changes to a scheduled message: kept until saved or discarded; the scheduled version is unchanged.
 api.put('/jobs/:id/edit-draft', wrap(async (req, res) => { drafts.saveEdit(Number(req.params.id), req.body?.data, req.user.username); res.json({ ok: true }); }));
 api.delete('/jobs/:id/edit-draft', wrap(async (req, res) => { drafts.clearEdit(Number(req.params.id)); res.json({ ok: true }); }));
@@ -368,6 +393,7 @@ api.post('/jobs/:id/send-now', wrap(async (req, res) => {
   if (!r.changes) throw bad('Only scheduled jobs can be started now');
   // keep run_at so a repeating job keeps its weekly time
   audit(req.user.username, 'job_send_now', `#${req.params.id}`);
+  history.record(Number(req.params.id), req.user.username, 'Asked to send now');
   res.json({ ok: true });
 }));
 

@@ -180,6 +180,42 @@ test('Sent can be limited to a period and downloaded as CSV', async () => {
   assert.match(csv.body, /"New ""group"""/); assert.doesNotMatch(csv.body, /Old, group/);
 });
 
+// ---------- batch 5: pause a weekly message, change history ----------
+const istDate = ms => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
+test('a weekly message can be paused until a date, skipping the weeks before it, and resumed early', async () => {
+  const r = await call('POST', 'jobs', null, { form: form({ title: 'Weekly', message: 'Every day', groups: ['a@g.us'], date: tomorrow(), time: '07:00', repeatDays: [0, 1, 2, 3, 4, 5, 6] }) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const until = istDate(Date.now() + 10 * 86400e3);
+  const p = await call('POST', `jobs/${r.body.id}/pause`, { until });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  let j = (await jobsIn('upcoming')).find(x => x.id === r.body.id);
+  assert.equal(j.status, 'scheduled', 'still scheduled, only later');
+  assert.equal(j.date, until, 'next send is on the day it starts again');
+  assert.ok(j.pausedUntil);
+  assert.equal((await call('POST', `jobs/${r.body.id}/pause`, { until: istDate(Date.now() - 86400e3) })).status, 400, 'not in the past');
+  const res = await call('POST', `jobs/${r.body.id}/resume`);
+  assert.equal(res.status, 200);
+  j = (await jobsIn('upcoming')).find(x => x.id === r.body.id);
+  assert.equal(j.pausedUntil, null); assert.ok(j.runAt < Date.now() + 2 * 86400e3, 'back to the next usual time');
+  assert.equal((await call('POST', `jobs/${r.body.id}/resume`)).status, 409, 'not paused any more');
+  const once = await call('POST', 'jobs', null, { form: form({ title: '', message: 'Once', groups: ['a@g.us'], date: tomorrow(), time: '07:30' }) });
+  assert.equal((await call('POST', `jobs/${once.body.id}/pause`, { until })).status, 400, 'one-off messages are rescheduled, not paused');
+});
+
+test('a message shows who changed what, and when', async () => {
+  const r = await call('POST', 'jobs', null, { form: form({ title: 'History', message: 'First text', groups: ['a@g.us'], date: tomorrow(), time: '13:00' }) });
+  await call('PUT', `jobs/${r.body.id}`, null, { form: form({ title: 'History', message: 'Second text', groups: ['a@g.us', 'b@g.us'], date: tomorrow(), time: '13:30' }) });
+  await call('POST', `jobs/${r.body.id}/reschedule`, { date: tomorrow(), time: '14:00' });
+  const h = (await call('GET', `jobs/${r.body.id}/history`)).body.history;
+  const texts = h.map(x => x.text).join('\n');
+  assert.match(texts, /Created for/);
+  assert.match(texts, /Edited: text → “Second text”; time .* → .*13:30; added Weekend Cohort 2/);
+  assert.match(texts, /rescheduled it to .*14:00/);
+  assert.ok(h[0].at >= h[h.length - 1].at, 'newest first');
+  assert.equal(h.find(x => /Created/.test(x.text)).by, 'admin@example.com');
+  assert.equal((await call('GET', 'jobs/99999/history')).status, 404);
+});
+
 test('every status change in these tests followed the state machines', () => {
   const Database = require('better-sqlite3');
   const d = new Database(path.join(DATA, 'wabox.db'), { readonly: true });

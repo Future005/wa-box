@@ -72,6 +72,7 @@ what each group gets (useful with `{group}`).
   - *Standard* (40 s–2 min).
   - *Custom*. It is never shorter than 30 seconds.
 - If you picked a saved list, WA Box suggests the time and pacing you usually use for it.
+- **+ Add another time** sends the same message again at another time (for example 9:00 and 17:00). Each time becomes its own message, so you can change or abort one without touching the others. Not available for weekly messages; use the repeat days instead.
 
 Below, it tells you when the last group will get it.
 
@@ -101,6 +102,9 @@ For 30 seconds you can **Undo** (a toast appears, and the message shows a countd
 - **Scheduled** lists everything coming up by day. Click a message to open it.
 - **Edit**, **Reschedule**, **Duplicate**, **Send now** (starts in 30 seconds), or **Abort**.
 - **Abort** on a weekly message lets you abort just this time and keep the repeat.
+- **Pause until…** (weekly messages): pick the date it should start again (or one, two, four weeks). Every send before that date is skipped; nothing else changes. **Resume now** ends the pause early.
+- **Search** at the top of Scheduled finds messages by text, name or group, in every tab.
+- **Change history** at the bottom of a message's panel shows who changed what and when (text, time, groups, image, pacing), and what WA Box did with it.
 - While it's sending you can **Abort** or **Change the rest**. Groups that already got it keep it.
 
 Messages scheduled by an outside tool through the API show the tool's name, e.g. *Google Sheet (API)*.
@@ -146,6 +150,10 @@ Plans change. Every upcoming message shows two buttons right on its row, always 
 
 Filter to **Problems** to see only what needs attention. Click a row for the full message.
 
+Pick a period (**Today**, **7 days**, **30 days**, **All**) and press **Download CSV** to get that period as a spreadsheet: when, group, message, result and delivery.
+
+If a message finished but some groups didn't get it, its panel offers **Send to the N that didn't get it**: a copy opens with only those groups.
+
 ## When something didn't go
 
 <img src="media/never-twice.gif" alt="WhatsApp's reply is lost; WA Box checks the chat, finds the message and does not send it again" width="640">
@@ -162,8 +170,8 @@ If three sends fail in a row, WA Box pauses all sending and tells the admins. Th
 
 ## Templates and group lists
 
-- **Templates**: save messages you send often. In a new message, press **Use a template**.
-- **Group lists**: save sets of groups ("Weekend cohorts", "Thu–Fri batch") and pick them with one click. A list remembers when it's usually sent.
+- **Templates**: save messages you send often. Your most-used templates show as chips above the message box; click one to start from it. Edit or rename them on the Templates page.
+- **Group lists**: save sets of groups ("Weekend cohorts", "Thu–Fri batch") and pick them with one click. A list remembers when it's usually sent, and shows how many scheduled messages use it. Changing a list doesn't change messages already scheduled.
 
 ## Keyboard shortcuts
 
