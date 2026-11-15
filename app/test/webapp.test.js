@@ -82,3 +82,73 @@ test('a message keeps the name you give it, and the name can be changed when edi
   j = (await call('GET', 'jobs?view=upcoming')).body.jobs.find(x => x.id === r.body.id);
   assert.equal(j.title, 'Sat class');
 });
+
+// ---------- batch 3: drafts ----------
+const jobsIn = async view => (await call('GET', `jobs?view=${view}`)).body.jobs;
+
+test('a draft can be incomplete, is saved as you go, and never shows up as scheduled or sent', async () => {
+  const r = await call('POST', 'drafts', null, { form: form({ message: 'Half a thought', groups: ['a@g.us'], draft: { date: tomorrow(), time: '' } }) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal((await call('PUT', `drafts/${r.body.id}`, null, { form: form({ title: 'Quiz', message: 'Quiz on Friday', groups: ['a@g.us', 'b@g.us'], draft: { date: tomorrow(), time: '18:00' } }) })).status, 200);
+  const d = (await jobsIn('drafts')).find(j => j.id === r.body.id);
+  assert.equal(d.status, 'draft'); assert.equal(d.title, 'Quiz'); assert.equal(d.groups.length, 2); assert.equal(d.time, '18:00');
+  assert.ok(!(await jobsIn('upcoming')).some(j => j.id === r.body.id), 'not in upcoming');
+  assert.ok(!(await jobsIn('history')).some(j => j.id === r.body.id), 'not in history');
+  const empty = await call('POST', 'drafts', null, { form: form({ message: '', groups: [] }) });
+  assert.equal(empty.status, 200, 'an empty draft is fine');
+  assert.equal((await call('DELETE', `drafts/${empty.body.id}`)).status, 200);
+  assert.equal((await call('DELETE', `drafts/${empty.body.id}`)).status, 404);
+});
+
+test('scheduling a draft checks everything, then turns that same draft into a scheduled message', async () => {
+  const r = await call('POST', 'drafts', null, { form: form({ message: 'Class at 11', groups: [] }) });
+  const noGroups = await call('POST', `drafts/${r.body.id}/schedule`, null, { form: form({ title: '', message: 'Class at 11', groups: [], date: tomorrow(), time: '11:00' }) });
+  assert.equal(noGroups.status, 400, 'still checked');
+  const ok = await call('POST', `drafts/${r.body.id}/schedule`, null, { form: form({ title: 'Class', message: 'Class at 11', groups: ['a@g.us'], date: tomorrow(), time: '11:00' }) });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.id, r.body.id, 'same message');
+  const j = (await jobsIn('upcoming')).find(x => x.id === r.body.id);
+  assert.equal(j.status, 'scheduled'); assert.equal(j.time, '11:00');
+  assert.ok(!(await jobsIn('drafts')).some(x => x.id === r.body.id));
+});
+
+test('a scheduled message can go back to drafts (no time) before it starts', async () => {
+  const r = await call('POST', 'jobs', null, { form: form({ title: '', message: 'Maybe Saturday', groups: ['a@g.us'], date: tomorrow(), time: '09:30' }) });
+  const u = await call('POST', `jobs/${r.body.id}/unschedule`);
+  assert.equal(u.status, 200, JSON.stringify(u.body));
+  const d = (await jobsIn('drafts')).find(x => x.id === r.body.id);
+  assert.equal(d.status, 'draft'); assert.equal(d.time, '09:30', 'remembers the time it had');
+  assert.ok(!(await jobsIn('upcoming')).some(x => x.id === r.body.id));
+  assert.equal((await call('POST', `jobs/${r.body.id}/unschedule`)).status, 409, 'already a draft');
+});
+
+test('aborting can keep a draft with the same text for the groups that did not get it', async () => {
+  const r = await call('POST', 'jobs', null, { form: form({ title: 'Webinar', message: 'Webinar at 7', groups: ['a@g.us', 'b@g.us', 'c@g.us'], date: tomorrow(), time: '19:00' }) });
+  const c = await call('POST', `jobs/${r.body.id}/cancel`, { scope: 'all', keepDraft: true });
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.ok(c.body.draftId);
+  const d = (await jobsIn('drafts')).find(x => x.id === c.body.draftId);
+  assert.equal(d.message, 'Webinar at 7'); assert.equal(d.title, 'Webinar'); assert.equal(d.groups.length, 3);
+  assert.equal((await jobsIn('history')).find(x => x.id === r.body.id).status, 'cancelled', 'the aborted one stays in history');
+  const r2 = await call('POST', 'jobs', null, { form: form({ title: '', message: 'No draft please', groups: ['a@g.us'], date: tomorrow(), time: '20:00' }) });
+  assert.equal((await call('POST', `jobs/${r2.body.id}/cancel`, { scope: 'all' })).body.draftId, null);
+});
+
+test('unsaved edits to a scheduled message are kept apart until saved; saving clears them', async () => {
+  const r = await call('POST', 'jobs', null, { form: form({ title: '', message: 'Original', groups: ['a@g.us'], date: tomorrow(), time: '12:00' }) });
+  assert.equal((await call('PUT', `jobs/${r.body.id}/edit-draft`, { data: { message: 'Half-edited', time: '12:30' } })).status, 200);
+  let j = (await jobsIn('upcoming')).find(x => x.id === r.body.id);
+  assert.equal(j.message, 'Original', 'the scheduled version is unchanged');
+  assert.equal(j.editDraft.data.message, 'Half-edited'); assert.equal(j.editDraft.by, 'admin@example.com');
+  assert.equal((await call('PUT', `jobs/${r.body.id}`, null, { form: form({ title: '', message: 'Final', groups: ['a@g.us'], date: tomorrow(), time: '12:30' }) })).status, 200);
+  j = (await jobsIn('upcoming')).find(x => x.id === r.body.id);
+  assert.equal(j.message, 'Final'); assert.equal(j.editDraft, null);
+});
+
+test('every status change in these tests followed the state machines', () => {
+  const Database = require('better-sqlite3');
+  const d = new Database(path.join(DATA, 'wabox.db'), { readonly: true });
+  const v = d.prepare('SELECT machine, from_state, to_state FROM state_violations').all();
+  d.close();
+  assert.deepEqual(v, []);
+});

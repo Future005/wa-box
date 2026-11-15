@@ -167,7 +167,7 @@ router.get('/messages', wrap(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
   const rows = view === 'upcoming'
     ? db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'active')} ORDER BY start_at LIMIT ?`).all(savedGroups.current() || null, limit * 2)
-    : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ${SM.inList('job', 'active')} ORDER BY updated_at DESC LIMIT ?`).all(savedGroups.current() || null, limit * 2);
+    : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'final')} ORDER BY updated_at DESC LIMIT ?`).all(savedGroups.current() || null, limit * 2);
   const allowed = keys.allowedGroupIds(req.key);
   const mine = rows.filter(j => !allowed || JSON.parse(j.groups_json).every(g => allowed.has(g.id))).slice(0, limit);
   res.json({ messages: mine.map(publicMessage) });

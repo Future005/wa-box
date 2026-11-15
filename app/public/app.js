@@ -71,7 +71,7 @@
 
   // ============ state + API ============
   const S = { me: null, status: null, groups: [], sync: null, lists: [], templates: [], upcoming: [], past: [], sends: [],
-    view: null, params: {}, compose: null, numbers: [], viewPhone: null, schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
+    view: null, params: {}, compose: null, numbers: [], viewPhone: null, drafts: [], schedFilter: 'upcoming', sentFilter: 'all', qrTimer: null, drawerJob: null };
 
   async function api(path, opts = {}) {
     const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'wabox' }, credentials: 'same-origin' };
@@ -121,10 +121,9 @@
     if (!S.me) return;
     let { view, params } = parseHash();
     if (!$(`.view[data-view="${view}"]`) || (ADMIN_VIEWS.has(view) && !isAdmin())) view = 'today';
-    if (S.view === 'compose' && view !== 'compose' && S.compose?.dirty && S.compose.mode !== 'new') {
-      if (!await dialog({ title: 'Leave without saving?', html: '<p>Your changes to this message will be lost.</p>', ok: 'Leave', cancel: 'Keep editing', danger: true })) {
-        history.replaceState(null, '', '#' + 'compose' + (S.composeQuery || '')); return;
-      }
+    if (S.view === 'compose' && view !== 'compose' && S.compose?.dirty) {
+      saveDraftNow(S.compose);   // nothing is lost: new messages go to Drafts, edits are kept for later
+      if (S.compose.mode === 'edit') toast('Your changes are kept, not live yet. Find them in Scheduled → Drafts.');
     }
     S.view = view; S.params = params;
     if (['today', 'scheduled'].includes(view)) await loadJobs();   // always fresh when you open a page
@@ -191,7 +190,7 @@
     catch (err) { $('#password-error').textContent = err.message; }
   });
   $('#logout').addEventListener('click', async () => {
-    if (S.compose?.dirty && S.compose.mode !== 'new' && !await dialog({ title: 'Sign out?', html: '<p>Unsaved changes to this message will be lost.</p>', ok: 'Sign out', danger: true })) return;
+    if (S.compose?.dirty) await saveDraftNow(S.compose);   // keep what's being written
     try { await api('logout', { method: 'POST' }); } catch { /* ignore */ }
     location.hash = ''; location.reload();
   });
@@ -274,16 +273,17 @@
   }
   async function loadJobs() {
     try {
-      const [u, p] = await Promise.all([api('jobs?view=upcoming' + qPhone('&')), api('jobs?view=history' + qPhone('&'))]);
-      S.upcoming = u.jobs; S.past = p.jobs;
+      const [u, p, d] = await Promise.all([api('jobs?view=upcoming' + qPhone('&')), api('jobs?view=history' + qPhone('&')), api('jobs?view=drafts' + qPhone('&'))]);
+      S.upcoming = u.jobs; S.past = p.jobs; S.drafts = d.jobs;
     } catch { return; }
     $('#count-scheduled').textContent = S.upcoming.length || '';
+    $('#count-drafts').textContent = (S.drafts.length + S.upcoming.filter(j => j.editDraft).length) || '';
     const failed = S.past.filter(j => j.status === 'done_with_errors' && Date.now() - j.updatedAt < 7 * DAY).length;
     $('#count-failed').textContent = failed || '';
   }
   async function loadLists() { try { S.lists = (await api('lists' + qPhone('?'))).lists; } catch { /* keep */ } }
   async function loadTemplates() { try { S.templates = (await api('templates')).templates; } catch { /* keep */ } }
-  const findJob = id => S.upcoming.find(j => j.id === id) || S.past.find(j => j.id === id);
+  const findJob = id => S.upcoming.find(j => j.id === id) || S.past.find(j => j.id === id) || S.drafts.find(j => j.id === id);
   const pacingLabel = j => `${dur(j.gapMin)}–${dur(j.gapMax)} between groups`;
   const repeatLabel = days => days.length === 7 ? 'every day' : [1, 2, 3, 4, 5, 6, 0].filter(d => days.includes(d)).map(d => DOW[d]).join(', ');
 
@@ -310,6 +310,10 @@
       const bad = sendsIn(j, 'didNotGet');
       return `<div class="pl-row clickable" data-job="${j.id}"><span><b>${esc(jobName(j))}</b><small>${plural(bad, 'group')} didn't get it · ${esc(whenLabel(j.runAt))}</small></span>${pill(j.status)}</div>`;
     }).join('');
+    const dl = S.drafts.slice(0, 3);
+    $('#today-drafts-title').classList.toggle('hidden', !S.drafts.length); $('#today-drafts').classList.toggle('hidden', !S.drafts.length);
+    $('#today-drafts-title').innerHTML = `Drafts${S.drafts.length > 3 ? ` <a class="link" href="#scheduled" data-go-drafts>All ${S.drafts.length}</a>` : ''}`;
+    $('#today-drafts').innerHTML = dl.map(d => `<a class="pl-row clickable" href="#compose?draft=${d.id}"><span><b>${esc(d.title || firstLine(d.message) || 'Untitled draft')}</b><small>${plural(d.groups.length, 'group')} · ${esc(ago(d.updatedAt))}</small></span><span class="pill draft">Draft</span></a>`).join('');
     loadSendsQuiet().then(() => {
       $('#today-recent').innerHTML = S.sends.filter(x => SMx.is('send', x.status, 'delivered')).slice(0, 6)
         .map(x => `<div class="pl-row clickable" data-job="${x.jobId}"><span><b>${esc(x.group)}</b><small>${esc(firstLine(x.preview))} · ${esc(ago(x.at))}</small></span>${sendPill(x.status)}</div>`).join('');
@@ -340,6 +344,9 @@
       const u = e.target.closest('[data-undo]'); if (u) { e.stopPropagation(); undoJob(Number(u.dataset.undo)); return; }
       const a = e.target.closest('[data-ract]');
       if (a) { e.stopPropagation(); const j = findJob(Number(a.dataset.id)); if (j) ({ reschedule: rescheduleFlow, abort: abortFlow, rest: changeRestFlow })[a.dataset.ract](j); return; }
+      const dd = e.target.closest('[data-deldraft]'); if (dd) { e.stopPropagation(); deleteDraftFlow(Number(dd.dataset.deldraft)); return; }
+      const d = e.target.closest('[data-draft]'); if (d) { location.hash = `compose?draft=${d.dataset.draft}`; return; }
+      const ej = e.target.closest('[data-editjob]'); if (ej) { location.hash = `compose?edit=${ej.dataset.editjob}`; return; }
       const r = e.target.closest('[data-job]'); if (r) openDrawer(Number(r.dataset.job));
     });
     $(sel).addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.job-row')) { e.preventDefault(); openDrawer(Number(e.target.dataset.job)); } });
@@ -423,7 +430,7 @@
         return `<div><span class="gn">${esc(g.name)}</span><span class="gs">${tickHtml(s)}${sendPill(s ? s.status : 'pending')}</span>${s?.error ? `<small>${esc(s.error)}</small>` : ''}${acts}</div>`; }).join('')}</div></div>`;
     const acts = [];
     if (isStartingSoon(j)) acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
-    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
+    else if (j.status === 'scheduled') acts.push(['edit', 'Edit', 'btn-primary'], ['reschedule', 'Reschedule', 'btn-ghost'], ['dup', 'Duplicate', 'btn-ghost'], ['now', 'Send now', 'btn-ghost'], ['unschedule', 'Move to drafts', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else if (j.status === 'running') acts.push(['rest', 'Change the rest', 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost'], ['grow'], ['abort', 'Abort', 'btn-danger-ghost']);
     else acts.push(['again', `Repeat ${shortDate(nextWeekOf(j))}`, 'btn-primary'], ['dup', 'Duplicate', 'btn-ghost']);
     $('#dr-actions').innerHTML = acts.map(([k, l, c]) => k === 'grow' ? '<span class="grow"></span>' : `<button class="btn ${c}" data-act="${k}" type="button">${l}</button>`).join('');
@@ -449,6 +456,12 @@
     try {
       if (b.dataset.act === 'undo') return undoJob(j.id);
       if (b.dataset.act === 'edit') location.hash = `compose?edit=${j.id}`;
+      if (b.dataset.act === 'unschedule') {
+        const r = await api(`jobs/${j.id}/unschedule`, { method: 'POST' });
+        closeDrawer(); await loadJobs(); if (S.view === 'scheduled') renderScheduled(); if (S.view === 'today') renderToday();
+        toast('Moved to drafts. It has no time, so nothing is sent.', false, { label: 'Open draft', run: () => { location.hash = `compose?draft=${r.draftId}`; } });
+        return;
+      }
       if (b.dataset.act === 'dup') location.hash = `compose?dup=${j.id}`;
       if (b.dataset.act === 'again') location.hash = `compose?again=${j.id}`;
       if (b.dataset.act === 'now' && await dialog({ title: 'Send now?', html: `<p>Starts in 30 seconds (you can still undo) and goes to ${plural(j.groups.length, 'group')} with the same random gaps.${j.repeatDays.length ? ' This counts as its next weekly send; the repeat carries on after that.' : ''}</p>`, ok: 'Send now' })) {
@@ -493,12 +506,16 @@
       html = `<p>It won't be sent on ${esc(when)}. None of the ${plural(n, 'group')} will get it.</p><p class="hint">Only the time changed? Use <b>Reschedule</b> instead.</p>`;
       ok = 'Abort message';
     }
+    const left = n - got;
+    if (left > 0) html += `<label class="check keep-draft"><input type="checkbox" id="keep-draft" checked><span>Keep it as a draft: the text${j.hasImage || j.imageUrl ? ', the image' : ''} and the ${plural(left, 'group')} that ${left === 1 ? "doesn't" : "don't"} get it, ready to fix and schedule again${weekly ? ' (when you abort the weekly repeat)' : ''}.</span></label>`;
     if (!await dialog({ title, html, ok, cancel: "Don't abort", danger: true })) return;
     const scope = picked('scope') || 'all';
+    const keepDraft = !!$('#keep-draft')?.checked && scope === 'all';
     try {
-      const r = await api(`jobs/${j.id}/cancel`, { method: 'POST', body: { scope } });
-      toast(r.skipped ? `${r.sent ? `Aborted. ${r.sent} of ${n} got it.` : 'Aborted this time.'} Next: ${whenLabel(r.next)}`
-        : r.sent ? `Aborted. ${r.sent} of ${n} got it; the other ${r.notSent} won't.` : "Aborted. It won't be sent.");
+      const r = await api(`jobs/${j.id}/cancel`, { method: 'POST', body: { scope, keepDraft } });
+      toast((r.skipped ? `${r.sent ? `Aborted. ${r.sent} of ${n} got it.` : 'Aborted this time.'} Next: ${whenLabel(r.next)}`
+        : r.sent ? `Aborted. ${r.sent} of ${n} got it; the other ${r.notSent} won't.` : "Aborted. It won't be sent.") + (r.draftId ? ' Kept as a draft.' : ''),
+        false, r.draftId ? { label: 'Open draft', run: () => { location.hash = `compose?draft=${r.draftId}`; } } : null);
     } catch (err) { toast(err.message, true); }
     await afterChange(j.id);
   }
@@ -553,10 +570,37 @@
     const f = S.schedFilter;
     $$('#sched-tabs button').forEach(b => b.classList.toggle('on', b.dataset.filter === f));
     let jobs, dateOf = j => j.startAt;
+    if (f === 'drafts') { $('#sched-list').innerHTML = draftsHtml(); return; }
     if (f === 'upcoming') jobs = S.upcoming;
     else if (f === 'repeat') jobs = S.upcoming.filter(j => j.repeatDays.length);
     else { jobs = S.past; dateOf = j => j.runAt; }
     $('#sched-list').innerHTML = jobs.length ? agendaHtml(jobs, dateOf) : `<div class="empty"><b>${f === 'past' ? 'Nothing finished yet' : f === 'repeat' ? 'No repeating messages' : 'Nothing scheduled'}</b><p>${f === 'repeat' ? 'Turn on "Repeat every week" when you write a message, for things like weekend class reminders.' : 'Messages you schedule show up here, grouped by day.'}</p>${f !== 'past' ? '<a class="btn btn-primary" href="#compose">New message</a>' : ''}</div>`;
+  }
+  // Drafts: messages without a time (the 'draft' state), plus unsaved edits to scheduled messages.
+  function draftRow(d) {
+    const when = d.date && d.time ? `For ${whenLabel(istEpoch(d.date, d.time))}` : 'No time yet';
+    return `<div class="job-row draft-row" role="button" tabindex="0" data-draft="${d.id}">
+      <span class="job-time">${ICON.draft || '✎'}</span>
+      <span class="job-main"><span class="job-title">${esc(jobName(d) === `Message #${d.id}` ? 'Untitled draft' : jobName(d))}</span>
+        <span class="job-meta"><span>${ICON.users}${plural(d.groups.length, 'group')}</span><span>${esc(when)}</span>${d.hasImage || d.imageUrl ? `<span>${ICON.img}Image</span>` : ''}<span>${ICON.user}${esc(who(d.updatedBy).split('@')[0])} · ${esc(ago(d.updatedAt))}</span></span>
+        ${d.note ? `<span class="hint">${esc(d.note)}</span>` : ''}</span>
+      <span class="row-end"><span class="row-acts"><button type="button" class="btn btn-ghost btn-sm" data-draft="${d.id}">Open</button><button type="button" class="btn btn-danger-ghost btn-sm" data-deldraft="${d.id}">Delete</button></span></span></div>`;
+  }
+  function draftsHtml() {
+    const edits = S.upcoming.filter(j => j.editDraft);
+    const parts = [];
+    if (edits.length) parts.push(`<div class="day"><h3><span>Unsaved changes to scheduled messages</span></h3><div class="day-rows">${edits.map(j => `<div class="job-row draft-row" role="button" tabindex="0" data-editjob="${j.id}">
+      <span class="job-time">${ist(j.runAt).time}</span><span class="job-main"><span class="job-title">${esc(jobName(j))}</span>
+      <span class="job-meta"><span>Scheduled ${esc(whenLabel(j.runAt))} as it was</span><span>${ICON.user}${esc(who(j.editDraft.by).split('@')[0])} · edited ${esc(ago(j.editDraft.at))}</span></span></span>
+      <span class="row-end"><span class="row-acts"><button type="button" class="btn btn-ghost btn-sm" data-editjob="${j.id}">Continue editing</button></span></span></div>`).join('')}</div></div>`);
+    if (S.drafts.length) parts.push(`<div class="day"><h3><span>Drafts</span></h3><div class="day-rows">${S.drafts.map(draftRow).join('')}</div></div>`);
+    return parts.join('') || `<div class="empty"><b>No drafts</b><p>Anything you start writing is saved here as you type, until you give it a time. Aborted messages can come back here too.</p><a class="btn btn-primary" href="#compose">New message</a></div>`;
+  }
+  async function deleteDraftFlow(id) {
+    const d = S.drafts.find(x => x.id === id);
+    if (!await dialog({ title: 'Delete this draft?', html: `<p>“${esc(d ? (d.title || firstLine(d.message) || 'Untitled draft') : 'This draft')}” will be deleted. Nothing was sent from it.</p>`, ok: 'Delete', danger: true })) return;
+    try { await api(`drafts/${id}`, { method: 'DELETE' }); toast('Draft deleted'); } catch (err) { toast(err.message, true); }
+    await loadJobs(); if (S.view === 'scheduled') renderScheduled(); if (S.view === 'today') renderToday();
   }
   $('#sched-tabs').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { S.schedFilter = b.dataset.filter; renderScheduled(); } });
 
@@ -678,7 +722,7 @@
   const DRAFT_KEY = 'wabox.draft.v1';
   function blankCompose() {
     const last = store.get('wabox.lastTime') || '10:00';
-    return { mode: 'new', id: null, picked: new Map(), message: '', title: '', templateId: null, date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
+    return { mode: 'new', id: null, draftId: null, picked: new Map(), message: '', title: '', templateId: null, date: ist(Date.now() + DAY).date, time: last, repeat: [], pace: 'standard',
       gapMin: 40, gapMax: 120, image: null, imageUrl: null, keepImage: false, removeImage: false, imageLink: null, linkPreview: true, dirty: false, search: '' };
   }
   async function openCompose() {
@@ -689,7 +733,17 @@
     await Promise.all([loadGroups(), loadLists(), loadTemplates()]);
     let c = blankCompose(); let note = '';
     const fromJob = id => findJob(Number(id));
-    if (p.edit || p.dup || p.again) {
+    if ((p.draft || p.edit) && !fromJob(p.draft || p.edit)) await loadJobs();
+    let editDraft = null;
+    if (p.draft) {
+      const d = fromJob(p.draft);
+      if (!d || d.status !== 'draft') { toast('That draft is no longer here (scheduled or deleted).', true); location.hash = 'scheduled'; return; }
+      applySnapshot(c, { title: d.title, message: d.message, picked: d.groups, date: d.date, time: d.time, repeat: d.repeatDays, gapMin: d.gapMin, gapMax: d.gapMax,
+        pace: d.pace, imageLink: d.imageUrl, linkPreview: d.linkPreview });
+      c.draftId = d.id; c.timeChosen = !!(d.date && d.time); c.keepImage = d.hasImage; c.imageUrl = d.hasImage ? `api/jobs/${d.id}/image?v=${d.updatedAt}` : null;
+      if (!c.date || !c.time || istEpoch(c.date, c.time) < Date.now()) { const b = blankCompose(); c.date = c.date && istEpoch(c.date, '23:59') > Date.now() ? c.date : b.date; c.time = c.time || b.time; }
+      note = d.note || `Draft · last saved ${ago(d.updatedAt)} by ${who(d.updatedBy).split('@')[0]}.`;
+    } else if (p.edit || p.dup || p.again) {
       const j = fromJob(p.edit || p.dup || p.again);
       if (!j) { toast('That message is no longer available', true); location.hash = 'scheduled'; return; }
       if (p.edit && j.status !== 'scheduled') { toast("This message has started sending, so it can't be edited. You can duplicate it.", true); location.hash = `compose?dup=${j.id}`; return; }
@@ -708,12 +762,14 @@
       else if (p.again) note = `Copied from ${shortDate(j.runAt)}. Moved to ${shortDate(istEpoch(c.date, c.time))}; check the date and the text.`;
       if (p.rest) note = `Only the ${plural(c.picked.size, 'group')} that didn't get it yet. Fix the text or the time, then schedule.`;
       if (p.edit && j.imagePurged) note = 'The uploaded image was already deleted. Add it again if you need it.';
+      if (p.edit && j.editDraft) editDraft = j.editDraft;
     } else {
+      // Older versions kept one draft in this browser: move it to the server's Drafts once.
       const d = store.get(DRAFT_KEY);
       if (d && (d.message || (d.picked || []).length)) {
-        Object.assign(c, d, { picked: new Map((d.picked || []).map(g => [g.id, g])), image: null, imageUrl: null, keepImage: false, dirty: false, linkPreview: d.linkPreview !== false });
+        applySnapshot(c, d); store.del(DRAFT_KEY); c.migrate = true;
         if (istEpoch(c.date, c.time) < Date.now()) c.date = ist(Date.now() + DAY).date;
-        note = 'Draft restored.';
+        note = 'Your unfinished message is back, and now saved in Drafts.';
       }
       if (p.tpl) { const t = S.templates.find(x => String(x.id) === p.tpl); if (t) { c.message = t.message; c.templateId = t.id; c.title = c.title || t.name; } }
       if (p.list) { const l = S.lists.find(x => String(x.id) === p.list); if (l) { c.picked = new Map(l.groups.map(g => [g.id, g])); note = `Groups from "${l.name}".`; } }
@@ -722,7 +778,10 @@
     $('#compose-title').textContent = p.rest ? 'Send the rest' : { new: 'New message', edit: 'Edit message', dup: 'Duplicate message', again: 'Repeat from last week' }[c.mode];
     const from = S.numbers.length > 1 ? ` Sends from ${fmtPhone(S.viewPhone || linkedPhone())}.` : '';
     $('#compose-lede').textContent = (c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.') + from;
-    $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
+    $('#draft-note').innerHTML = editDraft
+      ? `<span>You have unsaved changes from ${esc(ago(editDraft.at))}${editDraft.by !== S.me.username ? ` by ${esc(who(editDraft.by).split('@')[0])}` : ''}. The scheduled version hasn't changed.</span> <button class="link" type="button" id="edit-resume">Continue with them</button> <button class="link" type="button" id="edit-drop">Discard them</button>`
+      : note ? esc(note) : '';
+    S.editDraftPending = editDraft;
     $('#job-error').textContent = '';
     $('#group-search').value = ''; S.gview = 'all';
     $('#message').value = c.message; $('#title').value = c.title || '';
@@ -732,17 +791,92 @@
     $('#link-preview').checked = c.linkPreview; $('#image-url').value = c.imageLink || ''; $('#image-link-row').classList.add('hidden');
     $('#repeat-on').checked = c.repeat.length > 0;
     $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
-    $('#compose-discard').textContent = c.mode === 'new' ? 'Clear' : c.mode === 'edit' ? 'Discard changes' : 'Back';
+    renderComposeButtons(); setSaveState('');
     c.pvIdx = 0;
     renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); updateCompose();
     if (c.mode === 'new' && !c.message) setTimeout(() => (c.picked.size ? $('#message') : $('#group-search')).focus({ preventScroll: true }), 50);
+    if (c.migrate) { delete c.migrate; c.dirty = true; saveDraftNow(c); }
   }
+
+  // ---- drafts while writing: saved to the server as you type (debounced), several at once ----
+  // A new message becomes a draft (no time) as soon as it has something in it. Editing a scheduled
+  // message keeps your unsaved changes apart; the scheduled version is unchanged until you save.
+  function snapshot(c) {
+    return { title: c.title, message: c.message, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: $('#repeat-on').checked ? c.repeat : [],
+      pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, imageLink: c.imageLink, linkPreview: c.linkPreview, templateId: c.templateId };
+  }
+  function applySnapshot(c, d) {
+    Object.assign(c, { title: d.title || '', message: d.message || '', picked: new Map((d.picked || []).map(g => [g.id, { id: g.id, name: g.name }])),
+      date: d.date || c.date, time: d.time || c.time, repeat: [...(d.repeat || [])], gapMin: d.gapMin || c.gapMin, gapMax: d.gapMax || c.gapMax,
+      imageLink: d.imageLink || null, linkPreview: d.linkPreview !== false, templateId: d.templateId || null });
+    c.pace = d.pace || (c.gapMin === 60 && c.gapMax === 180 ? 'gentle' : c.gapMin === 40 && c.gapMax === 120 ? 'standard' : 'custom');
+  }
+  const hasContent = c => !!(c.message.trim() || c.title.trim() || c.picked.size || c.image || c.imageLink);
+  function setSaveState(t) { $('#save-state').textContent = t; }
+  function renderComposeButtons() {
+    const c = C();
+    $('#compose-discard').textContent = c.mode === 'edit' ? 'Discard changes' : c.draftId ? 'Delete draft' : 'Clear';
+    $('#save-draft').classList.toggle('hidden', c.mode === 'edit');
+    $('#save-draft').textContent = c.draftId ? 'Done for now' : 'Save draft';
+  }
+  let saveTimer = null, saving = Promise.resolve();
+  function scheduleSave(c) { clearTimeout(saveTimer); S.pendingSave = c; saveTimer = setTimeout(() => saveDraftNow(c), 1200); }
+  function saveDraftNow(c = S.pendingSave) {
+    clearTimeout(saveTimer); S.pendingSave = null;
+    if (!c || !c.dirty) return saving;
+    saving = saving.then(async () => {
+      try {
+        if (c.mode === 'edit') {
+          await api(`jobs/${c.id}/edit-draft`, { method: 'PUT', body: { data: snapshot(c) } });
+          if (c === C()) setSaveState(`Changes kept ${ist(Date.now()).time} · not live until you save`);
+          return;
+        }
+        if (!hasContent(c)) return;
+        const fd = new FormData();
+        const snap = snapshot(c);
+        fd.set('title', c.title || ''); fd.set('message', c.message);
+        fd.set('groups', JSON.stringify(snap.picked.map(g => g.id)));
+        // A draft only remembers a time someone actually picked ("No time yet" otherwise).
+        const chosen = c.timeChosen || c.mode !== 'new';
+        fd.set('draft', JSON.stringify({ date: chosen ? c.date : '', time: chosen ? c.time : '', pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, repeatDays: snap.repeat }));
+        if (c.imageLink) fd.set('imageUrl', c.imageLink);
+        fd.set('linkPreview', c.linkPreview ? '1' : '0');
+        if (c.image) fd.set('image', c.image);
+        if (c.removeImage) fd.set('removeImage', '1');
+        const r = await api(c.draftId ? `drafts/${c.draftId}` : 'drafts', { method: c.draftId ? 'PUT' : 'POST', form: fd });
+        const first = !c.draftId; c.draftId = r.id;
+        if (c.image) { c.image = null; c.keepImage = true; c.imageUrl = `api/jobs/${r.id}/image?v=${Date.now()}`; }
+        c.removeImage = false;
+        if (c === C()) {
+          if (first && S.view === 'compose') { history.replaceState(null, '', `#compose?draft=${r.id}`); S.params = { draft: String(r.id) }; S.composeQuery = `?draft=${r.id}`; }
+          setSaveState(`Draft saved ${ist(Date.now()).time}`); renderComposeButtons();
+        }
+      } catch (err) { if (c === C()) setSaveState(`Not saved: ${err.message}`); }
+    });
+    return saving;
+  }
+  window.addEventListener('hashchange', () => { if (S.pendingSave) saveDraftNow(S.pendingSave); });
+  window.addEventListener('pagehide', () => { if (S.pendingSave) saveDraftNow(S.pendingSave); });
+  $('#draft-note').addEventListener('click', async e => {
+    const c = C();
+    if (e.target.id === 'edit-resume' && S.editDraftPending) {
+      applySnapshot(c, S.editDraftPending.data); c.dirty = true; S.editDraftPending = null;
+      $('#message').value = c.message; $('#title').value = c.title; $('#date').value = c.date; $('#time').value = c.time;
+      $('#gapMin').value = c.gapMin; $('#gapMax').value = c.gapMax; $('#repeat-on').checked = c.repeat.length > 0;
+      $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); });
+      $('#draft-note').textContent = 'Your unsaved changes are back. Press Save changes to make them live.';
+      renderPicker(); renderDayChips(); renderPace(); renderImage(); renderTplBar(); updateCompose();
+    }
+    if (e.target.id === 'edit-drop') {
+      try { await api(`jobs/${c.id}/edit-draft`, { method: 'DELETE' }); } catch { /* already gone */ }
+      S.editDraftPending = null; $('#draft-note').textContent = 'Unsaved changes discarded.';
+    }
+  });
   function markDirty() {
     const c = C(); if (!c) return; c.dirty = true;
-    if (c.mode === 'new') store.set(DRAFT_KEY, { message: c.message, title: c.title, templateId: c.templateId, picked: [...c.picked.values()], date: c.date, time: c.time, repeat: c.repeat, pace: c.pace, gapMin: c.gapMin, gapMax: c.gapMax, imageLink: c.imageLink, linkPreview: c.linkPreview });
+    scheduleSave(c);
     updateCompose();
   }
-  $('#draft-note').addEventListener('click', e => { if (e.target.id === 'draft-clear') { store.del(DRAFT_KEY); S.params = {}; openCompose(); } });
 
   // groups picker
   function renderPicker() {
@@ -968,9 +1102,9 @@
     for (let i = 0; i < 8; i++) { const ms = Date.now() + i * DAY; const x = ist(ms); chips.push({ date: x.date, b: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DOW[x.dow], s: `${x.d} ${MON[x.m]}` }); }
     $('#day-chips').innerHTML = chips.map(ch => `<button type="button" class="dchip ${ch.date === c.date ? 'on' : ''}" data-date="${ch.date}"><b>${ch.b}</b><small>${ch.s}</small></button>`).join('');
   }
-  $('#day-chips').addEventListener('click', e => { const b = e.target.closest('[data-date]'); if (!b) return; C().date = b.dataset.date; $('#date').value = b.dataset.date; renderDayChips(); markDirty(); });
-  $('#date').addEventListener('input', e => { C().date = e.target.value; renderDayChips(); markDirty(); });
-  $('#time').addEventListener('input', e => { C().time = e.target.value; markDirty(); });
+  $('#day-chips').addEventListener('click', e => { const b = e.target.closest('[data-date]'); if (!b) return; C().timeChosen = true; C().date = b.dataset.date; $('#date').value = b.dataset.date; renderDayChips(); markDirty(); });
+  $('#date').addEventListener('input', e => { C().timeChosen = true; C().date = e.target.value; renderDayChips(); markDirty(); });
+  $('#time').addEventListener('input', e => { C().timeChosen = true; C().time = e.target.value; markDirty(); });
   $('#repeat-on').addEventListener('change', e => {
     const c = C();
     if (e.target.checked && !c.repeat.length && c.date) { c.repeat = [ist(istEpoch(c.date, '12:00')).dow]; $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); }); }
@@ -1107,7 +1241,7 @@
   }
   $('#usual').addEventListener('click', e => {
     const b = e.target.closest('[data-usual]'); if (!b) return;
-    const c = C(); const l = S.lists.find(x => String(x.id) === b.dataset.usual); const u = l.usual;
+    const c = C(); c.timeChosen = true; const l = S.lists.find(x => String(x.id) === b.dataset.usual); const u = l.usual;
     c.date = usualDate(u); c.time = u.time; c.gapMin = u.gapMin; c.gapMax = u.gapMax;
     c.pace = u.gapMin === 60 && u.gapMax === 180 ? 'gentle' : u.gapMin === 40 && u.gapMax === 120 ? 'standard' : 'custom';
     if (u.repeat.length) { c.repeat = [...u.repeat]; $('#repeat-on').checked = true; $$('#repeat-days input').forEach(i => { i.checked = c.repeat.includes(Number(i.value)); }); }
@@ -1146,10 +1280,11 @@
     const btn = $('#job-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Saving…';
     try {
       let created = null;
+      clearTimeout(saveTimer); S.pendingSave = null; await saving;   // let a draft save in flight finish first
       if (c.mode === 'edit') await api('jobs/' + c.id, { method: 'PUT', form: fd });
+      else if (c.draftId) created = await api(`drafts/${c.draftId}/schedule`, { method: 'POST', form: fd });
       else created = await api('jobs', { method: 'POST', form: fd });
       store.set('wabox.lastTime', c.time);
-      if (c.mode === 'new') store.del(DRAFT_KEY);
       c.dirty = false;
       toast(c.mode === 'edit' ? 'Changes saved' : `Scheduled for ${whenLabel(istEpoch(c.date, c.time))}`, false, created ? { label: 'Undo', run: () => undoJob(created.id) } : null);
       await loadJobs(); location.hash = 'scheduled';
@@ -1157,12 +1292,27 @@
   });
   $('#compose-discard').addEventListener('click', async () => {
     const c = C();
-    if (c.mode === 'new') {
-      if ((c.message || c.picked.size) && !await dialog({ title: 'Clear this message?', html: '<p>Your draft and selected groups will be cleared.</p>', ok: 'Clear', danger: true })) return;
-      store.del(DRAFT_KEY); S.params = {}; openCompose();
-    } else { c.dirty = false; history.length > 1 ? history.back() : (location.hash = 'scheduled'); }
+    if (c.mode === 'edit') {
+      clearTimeout(saveTimer); S.pendingSave = null; c.dirty = false;
+      try { await saving; await api(`jobs/${c.id}/edit-draft`, { method: 'DELETE' }); } catch { /* nothing kept */ }
+      history.length > 1 ? history.back() : (location.hash = 'scheduled'); return;
+    }
+    clearTimeout(saveTimer); S.pendingSave = null; await saving;
+    if (c.draftId) {
+      if (!await dialog({ title: 'Delete this draft?', html: '<p>The text, image and groups are deleted. Nothing was sent from it.</p>', ok: 'Delete draft', danger: true })) return;
+      try { await api(`drafts/${c.draftId}`, { method: 'DELETE' }); toast('Draft deleted'); } catch (err) { toast(err.message, true); }
+    } else if (hasContent(c) && !await dialog({ title: 'Clear this message?', html: '<p>The text and selected groups will be cleared.</p>', ok: 'Clear', danger: true })) return;
+    c.dirty = false; S.params = {};
+    if (location.hash === '#compose') openCompose(); else location.hash = 'compose';
   });
-  window.addEventListener('beforeunload', e => { if (S.view === 'compose' && S.compose?.dirty && S.compose.mode !== 'new') { e.preventDefault(); e.returnValue = ''; } });
+  $('#save-draft').addEventListener('click', async () => {
+    const c = C();
+    if (!hasContent(c)) { toast('Nothing to save yet. Write something or pick a group first.'); return; }
+    c.dirty = true; await saveDraftNow(c);
+    if (!c.draftId) return;
+    c.dirty = false; S.schedFilter = 'drafts'; toast('Saved in Drafts. Nothing is sent until you give it a time.');
+    location.hash = 'scheduled';
+  });
 
   // ============ WhatsApp (admin) ============
   async function renderWhatsapp() {

@@ -11,6 +11,7 @@ const auth = require('./auth');
 const wa = require('./wa');
 const sched = require('./scheduler');
 const SM = require('./machines');   // state machines: public/machines.js
+const drafts = require('./drafts');
 const savedGroups = require('./groups');
 const { validateJobInput, checkImageUrl, serializeJob, createJob, UNDO_MS } = require('./jobs');
 const alerts = require('./alerts');
@@ -194,11 +195,13 @@ function saveMedia(file) {
 }
 
 api.get('/jobs', (req, res) => {
-  const view = req.query.view === 'history' ? 'history' : 'upcoming';
+  const view = ['history', 'drafts'].includes(req.query.view) ? req.query.view : 'upcoming';
   const phone = viewPhone(req) ?? savedGroups.current();
   const rows = view === 'upcoming'
     ? db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'active')} ORDER BY start_at`).all(phone || null)
-    : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status NOT IN ${SM.inList('job', 'active')} ORDER BY updated_at DESC LIMIT 100`).all(phone || null);
+    : view === 'drafts'
+      ? db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'drafts')} ORDER BY updated_at DESC`).all(phone || null)
+      : db.prepare(`SELECT * FROM jobs WHERE phone IS ? AND status IN ${SM.inList('job', 'final')} ORDER BY updated_at DESC LIMIT 100`).all(phone || null);
   res.json({ jobs: rows.map(serializeJob) });
 });
 
@@ -282,8 +285,28 @@ api.put('/jobs/:id', upload.single('image'), wrap(async (req, res) => {
       v.gapMin, v.gapMax, JSON.stringify(v.repeatDays), req.user.username, Date.now(), job.id);
   if (!r.changes) throw Object.assign(new Error('It started sending a moment ago, so your changes were not saved. Abort it, or use "Change the rest".'), { status: 409 });
   audit(req.user.username, 'job_edited', `#${job.id}`);
+  drafts.clearEdit(job.id);
   res.json({ ok: true });
 }));
+
+// ---------- drafts (no time yet; never sent) ----------
+api.post('/drafts', upload.single('image'), wrap(async (req, res) => {
+  res.json({ ok: true, id: drafts.saveDraft(null, req.body, { by: req.user.username, media: saveMedia(req.file) }) });
+}));
+api.put('/drafts/:id', upload.single('image'), wrap(async (req, res) => {
+  res.json({ ok: true, id: drafts.saveDraft(Number(req.params.id), req.body, { by: req.user.username, media: saveMedia(req.file) }) });
+}));
+api.delete('/drafts/:id', wrap(async (req, res) => { drafts.deleteDraft(Number(req.params.id), req.user.username); res.json({ ok: true }); }));
+api.post('/drafts/:id/schedule', upload.single('image'), wrap(async (req, res) => {
+  const v = await validateJobInput(req.body);
+  const id = drafts.scheduleDraft(Number(req.params.id), v, { by: req.user.username, media: saveMedia(req.file), removeImage: req.body.removeImage === '1' });
+  if (req.body.templateId) db.prepare('UPDATE templates SET uses = uses + 1 WHERE id=?').run(Number(req.body.templateId));
+  res.json({ ok: true, id });
+}));
+api.post('/jobs/:id/unschedule', wrap(async (req, res) => res.json({ ok: true, ...drafts.unschedule(Number(req.params.id), req.user.username) })));
+// Unsaved changes to a scheduled message: kept until saved or discarded; the scheduled version is unchanged.
+api.put('/jobs/:id/edit-draft', wrap(async (req, res) => { drafts.saveEdit(Number(req.params.id), req.body?.data, req.user.username); res.json({ ok: true }); }));
+api.delete('/jobs/:id/edit-draft', wrap(async (req, res) => { drafts.clearEdit(Number(req.params.id)); res.json({ ok: true }); }));
 
 api.post('/jobs/:id/undo', wrap(async (req, res) => {
   const r = sched.undo(Number(req.params.id), req.user.username);
@@ -296,7 +319,9 @@ api.post('/jobs/:id/cancel', wrap(async (req, res) => {
   const scope = req.body?.scope === 'this' ? 'this' : 'all';
   const r = sched.cancelJob(Number(req.params.id), req.user.username, scope);
   audit(req.user.username, r.skipped ? 'job_skipped' : 'job_cancelled', `#${req.params.id} (${r.sent} sent, ${r.notSent} not sent)`);
-  res.json({ ok: true, ...r });
+  // "Keep it as a draft": the text, image and the groups that didn't get it come back as a draft.
+  const draftId = r.cancelled && req.body?.keepDraft && r.notSent > 0 ? drafts.draftFromAborted(Number(req.params.id), req.user.username) : null;
+  res.json({ ok: true, ...r, draftId });
 }));
 
 // Move a waiting message. Weekly: scope "this" (just this time) or "series" (every week from now on).

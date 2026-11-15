@@ -30,6 +30,7 @@
       about: 'A scheduled message (one-off or weekly). Stored in jobs.status.',
       enforced: 'database', table: 'jobs',
       states: {
+        draft: { label: 'Draft', tone: 'neutral', help: 'No time yet, so nothing is sent. Open it to finish it and schedule it.' },
         scheduled: { label: 'Scheduled', tone: 'neutral', help: 'Waiting for its time. You can still edit, reschedule or abort it.' },
         running: { label: 'Sending', tone: 'active', help: 'Going out group by group, with gaps in between. You can abort it or change the rest.' },
         done: { label: 'Done', tone: 'good', final: true, help: 'Every group got it.' },
@@ -38,6 +39,9 @@
       },
       transitions: [
         [NEW, 'schedule', 'scheduled'],
+        [NEW, 'save_draft', 'draft'],                          // also: what's left of an aborted message
+        ['draft', 'schedule', 'scheduled'],
+        ['scheduled', 'unschedule', 'draft'],                  // only before any group got it
         ['scheduled', 'start', 'running'],
         ['running', 'finish', 'done'],
         ['running', 'finish_with_problems', 'done_with_errors'],
@@ -55,6 +59,7 @@
         active: ['scheduled', 'running'],
         final: ['done', 'done_with_errors', 'cancelled'],
         canSendAgain: ['scheduled', 'running', 'done', 'done_with_errors'],
+        drafts: ['draft'],
       },
     },
 

@@ -10,14 +10,17 @@ const bad = msg => Object.assign(new Error(msg), { status: 400 });
 
 function serializeJob(j) {
   const sends = db.prepare('SELECT group_id,group_name,status,error,sent_at,attempts,ack FROM sends WHERE job_id=? AND occurrence=?').all(j.id, j.run_at);
-  const { date, time } = epochToIst(j.run_at);
+  const plan = j.status === 'draft' ? (() => { try { return JSON.parse(j.draft_json || '{}'); } catch { return {}; } })() : null;
+  const { date, time } = plan ? { date: plan.date || '', time: plan.time || '' } : epochToIst(j.run_at);
+  let editDraft = null;
+  if (j.edit_json) { try { editDraft = { data: JSON.parse(j.edit_json), by: j.edit_by, at: j.edit_at }; } catch { /* ignore */ } }
   return {
     id: j.id, title: j.title, message: j.message, hasImage: !!j.media_file, imageUrl: j.media_url || null,
     imagePurged: !!j.media_purged, linkPreview: j.link_preview !== 0,
     groups: JSON.parse(j.groups_json), date, time, runAt: j.run_at, startAt: j.start_at,
     gapMin: j.gap_min, gapMax: j.gap_max, repeatDays: JSON.parse(j.repeat_days),
     phone: j.phone || '', status: j.status, note: j.note, createdBy: j.created_by, updatedBy: j.updated_by,
-    createdAt: j.created_at, updatedAt: j.updated_at, sends,
+    createdAt: j.created_at, updatedAt: j.updated_at, sends: plan ? [] : sends, pace: plan?.pace || null, editDraft,
   };
 }
 

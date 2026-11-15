@@ -104,6 +104,8 @@
           <div class="col-side">
             <h2 class="sec-title">Needs attention</h2>
             <div id="today-attention" class="panel-list"></div>
+            <h2 class="sec-title hidden" id="today-drafts-title">Drafts</h2>
+            <div id="today-drafts" class="panel-list hidden"></div>
             <h2 class="sec-title">Recently sent</h2>
             <div id="today-recent" class="panel-list"></div>
           </div>
@@ -224,7 +226,9 @@
 
             <div class="form-bar">
               <p class="form-error" id="job-error" role="alert"></p>
+              <span class="save-state" id="save-state" aria-live="polite"></span>
               <button type="button" class="btn btn-ghost" id="compose-discard">Discard</button>
+              <button type="button" class="btn btn-ghost" id="save-draft">Save draft</button>
               <button type="submit" class="btn btn-primary" id="job-submit">Schedule</button>
               <span class="kbd-hint" aria-hidden="true"><kbd id="mod-key">Ctrl</kbd> <kbd>↵</kbd></span>
             </div>
@@ -267,6 +271,7 @@
         <div class="tabs" id="sched-tabs" role="tablist">
           <button role="tab" data-filter="upcoming" class="on">Upcoming</button>
           <button role="tab" data-filter="repeat">Repeating</button>
+          <button role="tab" data-filter="drafts">Drafts <small id="count-drafts"></small></button>
           <button role="tab" data-filter="past">Finished &amp; aborted</button>
         </div>
         <div id="sched-list" class="agenda"></div>

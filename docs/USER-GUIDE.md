@@ -105,6 +105,16 @@ For 30 seconds you can **Undo** (a toast appears, and the message shows a countd
 
 Messages scheduled by an outside tool through the API show the tool's name, e.g. *Google Sheet (API)*.
 
+## Drafts
+
+Anything you start writing is saved as you type, as a **draft**: a message with no time yet, so nothing is sent. You can have several going at once (on any device), and the whole team sees them under **Scheduled → Drafts** (and on Today).
+
+- **Save draft** (or just leave the page) keeps it. **Delete draft** throws it away.
+- Open a draft, pick a time, press **Schedule**: the same message is now scheduled.
+- **Move to drafts** (in a scheduled message's panel) takes its time away before it starts, for when the date isn't decided yet.
+- **Aborting** offers to *keep it as a draft*: the text, the image and only the groups that didn't get it, ready to fix and schedule again.
+- **Editing a scheduled message** keeps your unsaved changes apart: the scheduled version goes out unchanged until you press **Save changes**. Come back later (Scheduled → Drafts → *Continue editing*) to finish or discard them.
+
 ## Last-minute changes
 
 Plans change. Every upcoming message shows two buttons right on its row, always visible (on Today, on Scheduled, and on your phone): **Reschedule** and **Abort**. A message that is sending shows **Abort**. You can use them up to the last second.

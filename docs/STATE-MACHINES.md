@@ -31,12 +31,16 @@ The server, the browser and the tests all read that one file.
 ```mermaid
 stateDiagram-v2
   direction LR
+  draft : Draft
   scheduled : Scheduled
   running : Sending
   done : Done
   done_with_errors : Done, with errors
   cancelled : Aborted
   [*] --> scheduled : schedule
+  [*] --> draft : save_draft
+  draft --> scheduled : schedule
+  scheduled --> draft : unschedule
   scheduled --> running : start
   running --> done : finish
   running --> done_with_errors : finish_with_problems
@@ -55,6 +59,7 @@ stateDiagram-v2
 
 | State | Shown as | What it means |
 |---|---|---|
+| `draft` | Draft | No time yet, so nothing is sent. Open it to finish it and schedule it. |
 | `scheduled` | Scheduled | Waiting for its time. You can still edit, reschedule or abort it. |
 | `running` | Sending | Going out group by group, with gaps in between. You can abort it or change the rest. |
 | `done` (final) | Done | Every group got it. |
@@ -68,6 +73,7 @@ Named groups (use these in code instead of listing states):
 | `active` | `scheduled`, `running` |
 | `final` | `done`, `done_with_errors`, `cancelled` |
 | `canSendAgain` | `scheduled`, `running`, `done`, `done_with_errors` |
+| `drafts` | `draft` |
 
 ## Send to one group
 

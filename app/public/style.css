@@ -634,3 +634,13 @@ fieldset.fld { border: 0; padding: 0; margin: 0; min-width: 0; }
   #groups-all { order: 3; }
 }
 #conn-sub { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* drafts */
+.save-state { margin-right: auto; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pill.draft { background: #eef1f0; color: var(--ink-2); border: 1px dashed var(--line-2); }
+.draft-row .job-time { color: var(--ink-3); }
+.draft-row .hint { display: block; margin-top: 2px; }
+.keep-draft { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; }
+.keep-draft input { margin-top: 3px; accent-color: var(--teal); }
+#draft-note .link { margin-left: 6px; }
+@media (max-width: 520px) { .save-state { display: none; } }
