@@ -623,18 +623,37 @@
   }
   async function editList(list) {
     const picked = new Set(list ? list.groups.map(g => g.id) : []);
+    let onlyPicked = false;
+    const nameOf = id => S.groups.find(g => g.id === id)?.name || list?.groups.find(g => g.id === id)?.name || id;
+    // Same picker as writing a message: chosen chips with ×, All / Selected, Enter ticks the first match.
     const draw = () => {
-      const q = ($('#dl-search')?.value || '').toLowerCase();
-      $('#dl-groups').innerHTML = S.groups.filter(g => !q || g.name.toLowerCase().includes(q)).sort(byName).map(g => `<label class="g-opt"><input type="checkbox" data-id="${esc(g.id)}" ${picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span></label>`).join('') || '<div class="g-empty">No saved groups match.</div>';
+      const q = ($('#dl-search')?.value || '').trim().toLowerCase();
+      $('#dl-groups').innerHTML = S.groups.filter(g => (!q || g.name.toLowerCase().includes(q)) && (!onlyPicked || picked.has(g.id))).sort(byName)
+        .map(g => `<label class="g-opt"><input type="checkbox" data-id="${esc(g.id)}" ${picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span></label>`).join('')
+        || `<div class="g-empty">${onlyPicked ? 'Nothing selected yet.' : 'No saved groups match.'}</div>`;
+      const chosen = [...picked].map(id => ({ id, name: nameOf(id) })).sort(byName);
+      $('#dl-chips').innerHTML = chosen.slice(0, 12).map(g => `<span class="pchip">${esc(g.name)}<button type="button" data-unpick="${esc(g.id)}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('') + (chosen.length > 12 ? `<span class="hint">+${chosen.length - 12} more</span>` : '');
       $('#dl-count').textContent = plural(picked.size, 'group') + ' selected';
+      $$('[data-dlview]').forEach(b => b.setAttribute('aria-checked', String((b.dataset.dlview === 'picked') === onlyPicked)));
     };
     const ok = await dialog({ title: list ? 'Edit list' : 'New group list', ok: list ? 'Save list' : 'Create list',
       html: `<label class="fld"><span>List name</span><input id="dl-name" maxlength="60" placeholder="e.g. Weekend cohorts"></label>
-        <input id="dl-search" type="search" placeholder="Search groups"><div class="dlg-picker" id="dl-groups"></div><p class="hint" id="dl-count"></p>`,
+        <div class="picked-chips" id="dl-chips"></div>
+        <div class="picker-bar dl-bar"><span class="search-wrap"><input id="dl-search" type="search" placeholder="Search groups · Enter ticks the first match" aria-label="Search groups"></span>
+          <span class="seg" role="radiogroup" aria-label="Show"><button type="button" data-dlview="all" role="radio">All</button><button type="button" data-dlview="picked" role="radio">Selected</button></span></div>
+        <div class="dlg-picker" id="dl-groups"></div><p class="hint" id="dl-count"></p>`,
       onOpen: () => {
         $('#dl-name').value = list?.name || ''; draw();
         $('#dl-search').addEventListener('input', draw);
-        $('#dl-groups').addEventListener('change', e => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? picked.add(id) : picked.delete(id); $('#dl-count').textContent = plural(picked.size, 'group') + ' selected'; });
+        $('#dl-search').addEventListener('keydown', e => {
+          if (e.key !== 'Enter') return; e.preventDefault();
+          const q = e.target.value.trim().toLowerCase(); if (!q) return;
+          const g = S.groups.filter(x => x.name.toLowerCase().includes(q)).sort(byName).find(x => !picked.has(x.id));
+          if (g) { picked.add(g.id); e.target.value = ''; draw(); }
+        });
+        $('#dl-groups').addEventListener('change', e => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? picked.add(id) : picked.delete(id); draw(); });
+        $('#dl-chips').addEventListener('click', e => { const x = e.target.closest('[data-unpick]'); if (x) { picked.delete(x.dataset.unpick); draw(); } });
+        $$('[data-dlview]').forEach(b => b.addEventListener('click', () => { onlyPicked = b.dataset.dlview === 'picked'; draw(); }));
         $('#dl-name').focus();
       } });
     if (!ok) return;
@@ -705,7 +724,7 @@
     $('#compose-lede').textContent = (c.mode === 'edit' ? 'Changes apply to this message and, if it repeats, every future send.' : 'Pick groups, write it once, choose when. WA Box spaces the sends out for you.') + from;
     $('#draft-note').innerHTML = note ? `${esc(note)}${note === 'Draft restored.' ? ' <button class="link" type="button" id="draft-clear">Start fresh</button>' : ''}` : '';
     $('#job-error').textContent = '';
-    $('#group-search').value = '';
+    $('#group-search').value = ''; S.gview = 'all';
     $('#message').value = c.message; $('#title').value = c.title || '';
     $('#date').value = c.date; $('#time').value = c.time;
     $('#image').value = '';
@@ -731,17 +750,27 @@
     const q = $('#group-search').value.trim().toLowerCase();
     const missing = [...c.picked.values()].filter(g => !S.groups.some(x => x.id === g.id));
     const all = [...S.groups, ...missing.map(g => ({ ...g, missing: true }))];
-    const shown = all.filter(g => !q || g.name.toLowerCase().includes(q));
+    const onlyPicked = S.gview === 'picked';
+    const shown = all.filter(g => (!q || g.name.toLowerCase().includes(q)) && (!onlyPicked || c.picked.has(g.id)));
     // unavailable ones first (so they can be removed), then A to Z; order never changes while ticking
     shown.sort((a, b) => (!!b.missing - !!a.missing) || byName(a, b));
     $('#group-list').innerHTML = shown.length ? shown.map(g => `<label class="g-opt${g.missing ? ' missing' : ''}"><input type="checkbox" data-id="${esc(g.id)}" ${c.picked.has(g.id) ? 'checked' : ''}><span class="g-name">${esc(g.name)}</span>${g.missing ? '<span class="hint">No longer available</span>' : ''}</label>`).join('')
-      : `<div class="g-empty">${S.groups.length ? 'No group matches that search.' : S.sync?.running ? 'Syncing groups from WhatsApp…' : (S.status?.wa?.status === 'ready' ? 'No groups yet. They sync a minute after the number connects, or press “Sync from WhatsApp”.' : 'No groups yet. An admin links the number in WhatsApp & groups, then its groups appear here.')}</div>`;
-    $('#picked-count').textContent = c.picked.size;
+      : `<div class="g-empty">${onlyPicked && !c.picked.size ? 'Nothing selected yet.' : S.groups.length ? 'No group matches that search.' : S.sync?.running ? 'Syncing groups from WhatsApp…' : (S.status?.wa?.status === 'ready' ? 'No groups yet. They sync a minute after the number connects, or press “Sync from WhatsApp”.' : 'No groups yet. An admin links the number in WhatsApp & groups, then its groups appear here.')}</div>`;
+    $('#picked-count').textContent = c.picked.size; $('#seg-count').textContent = c.picked.size;
+    $$('[data-gview]').forEach(b => b.setAttribute('aria-checked', String((S.gview || 'all') === b.dataset.gview)));
+    $('#groups-all').textContent = q ? 'Select all matches' : 'Select all';
+    $('#groups-all').classList.toggle('hidden', onlyPicked);
+    // Lists: "3/15" when part of one is picked; the title says what a click will do.
     $('#list-chips').innerHTML = S.lists.map(l => {
       const ids = l.groups.map(g => g.id); const n = ids.filter(id => c.picked.has(id)).length;
       const cls = ids.length && n === ids.length ? 'on' : n ? 'partial' : '';
-      return `<button type="button" class="lchip ${cls}" data-list="${l.id}" aria-pressed="${cls === 'on'}">${esc(l.name)} <small>${ids.length}</small></button>`;
+      const tip = cls === 'on' ? 'All picked. Click to remove these groups.' : n ? `${n} of ${ids.length} picked. Click to add the other ${ids.length - n}.` : `Click to pick all ${ids.length}.`;
+      return `<button type="button" class="lchip ${cls}" data-list="${l.id}" aria-pressed="${cls === 'on'}" title="${tip}">${cls === 'on' ? ICON.ok : ''}${esc(l.name)} <small>${n && cls !== 'on' ? `${n}/${ids.length}` : ids.length}</small></button>`;
     }).join('');
+    // The chosen groups, always visible, each removable.
+    const chosen = [...c.picked.values()].sort(byName);
+    const MAXC = window.innerWidth < 520 ? 4 : 10;   // on a phone keep the list close
+    $('#picked-chips').innerHTML = chosen.length ? `${chosen.slice(0, MAXC).map(g => `<span class="pchip${S.groups.some(x => x.id === g.id) ? '' : ' missing'}">${esc(g.name)}<button type="button" data-unpick="${esc(g.id)}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('')}${chosen.length > MAXC ? `<button type="button" class="link" data-gview-go="picked">+${chosen.length - MAXC} more</button>` : ''}<button type="button" class="link danger-link" id="groups-none">Unselect all</button>` : '';
     const s = S.sync;
     $('#groups-note').textContent = !s ? '' : s.running ? 'Syncing from WhatsApp…' : s.error ? `Last sync failed: ${s.error}` : s.finishedAt ? `${plural(S.groups.length, 'group')} · synced ${ago(s.finishedAt)}` : 'Not synced yet';
     $('#groups-sync').disabled = !!s?.running;
@@ -766,7 +795,25 @@
     S.groups.filter(g => !q || g.name.toLowerCase().includes(q)).forEach(g => c.picked.set(g.id, g));
     renderPicker(); markDirty();
   });
-  $('#groups-none').addEventListener('click', () => { C().picked.clear(); renderPicker(); markDirty(); });
+  $('#picked-chips').addEventListener('click', e => {
+    const x = e.target.closest('[data-unpick]');
+    if (x) { C().picked.delete(x.dataset.unpick); renderPicker(); markDirty(); return; }
+    if (e.target.closest('[data-gview-go]')) { S.gview = 'picked'; renderPicker(); return; }
+    if (e.target.id === 'groups-none') {
+      const c = C(); const before = [...c.picked.values()];
+      c.picked.clear(); renderPicker(); markDirty();
+      toast(`Unselected ${plural(before.length, 'group')}`, false, { label: 'Undo', run: () => { before.forEach(g => c.picked.set(g.id, g)); renderPicker(); markDirty(); } });
+    }
+  });
+  $$('[data-gview]').forEach(b => b.addEventListener('click', () => { S.gview = b.dataset.gview; renderPicker(); }));
+  // Enter in the search ticks the first match that isn't ticked yet, then clears the search for the next one.
+  $('#group-search').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    const c = C(); const q = e.target.value.trim().toLowerCase(); if (!q) return;
+    const g = S.groups.filter(x => x.name.toLowerCase().includes(q)).sort(byName).find(x => !c.picked.has(x.id));
+    if (!g) { toast('Every match is already selected'); return; }
+    c.picked.set(g.id, g); e.target.value = ''; renderPicker(); markDirty(); toast(`Added ${g.name}`);
+  });
   $('#groups-sync').addEventListener('click', syncGroups);
   async function syncGroups() {
     try { await api('groups/sync', { method: 'POST' }); toast('Syncing every group on this number. This can take a minute.'); }
@@ -1164,7 +1211,7 @@
       state: st, live: st === 'ready', needsScan, stuck, forMs, help: SMx.help('connection', st),
       dot: tone === 'good' ? 'ok' : tone === 'bad' && (stuck || st === 'qr_ready') ? 'bad' : 'warn',
       title: SMx.label('connection', st),
-      sub: st === 'ready' ? `${who}${w.upSince ? ` · for ${span(Date.now() - w.upSince)}` : ''}`
+      sub: st === 'ready' ? `${who}${w.upSince ? `\nfor ${span(Date.now() - w.upSince)}` : ''}`
         : needsScan ? (isAdmin() ? 'Open to scan the QR code' : 'Ask an admin to scan the QR code')
         : stuck ? `For ${span(forMs)} · ${isAdmin() ? 'open to check' : 'tell an admin'}`
         : `${forMs ? `${span(forMs)} · ` : ''}nothing to do`,

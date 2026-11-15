@@ -124,11 +124,15 @@
                 <span class="block-meta"><b id="picked-count">0</b> selected</span>
               </div>
               <div id="list-chips" class="list-chips"></div>
+              <div id="picked-chips" class="picked-chips" aria-live="polite"></div>
               <div class="picker">
                 <div class="picker-bar">
-                  <input id="group-search" type="search" placeholder="Search groups" autocomplete="off" aria-label="Search groups">
-                  <button type="button" class="btn btn-ghost btn-sm" id="groups-all">Select shown</button>
-                  <button type="button" class="btn btn-ghost btn-sm" id="groups-none">Clear</button>
+                  <span class="search-wrap"><input id="group-search" type="search" placeholder="Search groups · Enter ticks the first match" autocomplete="off" aria-label="Search groups"></span>
+                  <span class="seg" role="radiogroup" aria-label="Show">
+                    <button type="button" data-gview="all" role="radio" aria-checked="true">All</button>
+                    <button type="button" data-gview="picked" role="radio" aria-checked="false">Selected <b id="seg-count">0</b></button>
+                  </span>
+                  <button type="button" class="btn btn-ghost btn-sm" id="groups-all">Select all shown</button>
                 </div>
                 <div id="group-list" class="group-list" role="group" aria-label="Groups"></div>
                 <div class="picker-foot">
